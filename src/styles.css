@@ -3,26 +3,113 @@
    Soft coral is only ever a warning; the jar hues carry the colour. */
 
 :root {
+  color-scheme: light;
   --ground: #f2f4f1;
   --surface: #ffffff;
   --raised: #eef1ee;
   --border: #e2e6e1;
   --rule: #f0f2ef;
   --control: #cfd4d0;
+  --input-bg: #ffffff;
   --text: #1b1d1f;
+  --on-text: #ffffff; /* ink on a --text fill */
   --muted: #565b5f;
   --primary: #2d6a4a;
   --primary-ink: #ffffff;
   --positive: #247b50;
   --negative: #c41c29;
+  --negative-fill: #c41c29;
   --coral-bg: #ffe2dc;
   --coral-ink: #8a2a18;
+
+  --hover: #e9ece8;
+  --press: #e4e8e3;
+  --disabled-bg: #dfe3df;
+  --disabled-ink: #50555a;
+  --seg-bg: #e6eae5;
+  --seg-in-raised: #e0e5df;
+  --zero: #6f7377;
+  --soft-bg: #dcefe3;
+  --soft-ink: #1d5a3a;
+  --butter-bg: #fbf0c8;
+  --butter-ink: #5e4700;
+  --wallet-bg: #eef1f4;
+  --wallet-ink: #3a3d40;
+  --toast-bg: #1b1d1f;
+  --toast-ink: #ffffff;
+  --toast-link: #bfe0cc;
+  --scrim: rgba(27, 29, 31, 0.42);
+  --glass: rgba(255, 255, 255, 0.62);
+  --art-ink: #1b1d1f;
+
+  --hue-sage-bg: #dcefe3;
+  --hue-sage-ink: #1d5a3a;
+  --hue-teal-bg: #d5efec;
+  --hue-teal-ink: #0f4f4c;
+  --hue-sky-bg: #dcf1ff;
+  --hue-sky-ink: #0a3a80;
+  --hue-lav-bg: #e5e4f5;
+  --hue-lav-ink: #34335f;
+  --hue-butter-bg: #fbf0c8;
+  --hue-butter-ink: #5e4700;
 
   --radius-card: 20px;
   --radius-control: 12px;
   --gap: 16px;
   --nav-w: 232px;
   --font: 'Manrope', system-ui, -apple-system, 'Segoe UI', sans-serif;
+}
+
+/* Dark: true neutral darks, depth from lightness steps (no shadows), pastel tints become deep tints
+   with the pale ink of the same hue. Set by data-theme on <html> (see lib/theme.ts). */
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --ground: #0f1110;
+  --surface: #1a1d1b;
+  --raised: #252927;
+  --border: #2c312e;
+  --rule: #252927;
+  --control: #454b47;
+  --input-bg: #121513;
+  --text: #f0f2f0;
+  --on-text: #111312;
+  --muted: #a7aeaa;
+  --primary: #2f7d57;
+  --positive: #5cc58b;
+  --negative: #ff8a93;
+  --coral-bg: #4a2a22;
+  --coral-ink: #f9c3b6;
+
+  --hover: #232725;
+  --press: #2f3431;
+  --disabled-bg: #2a2e2c;
+  --disabled-ink: #959c98;
+  --seg-bg: #252927;
+  --seg-in-raised: #1a1d1b;
+  --zero: #8b928e;
+  --soft-bg: #1f3a2c;
+  --soft-ink: #bfe0cc;
+  --butter-bg: #3d3416;
+  --butter-ink: #f6e2a0;
+  --wallet-bg: #2a2f2c;
+  --wallet-ink: #c4cac6;
+  --toast-bg: #f0f2f0;
+  --toast-ink: #111312;
+  --toast-link: #1d5a3a;
+  --scrim: rgba(0, 0, 0, 0.6);
+  --glass: rgba(255, 255, 255, 0.07);
+  --art-ink: #e6eae7;
+
+  --hue-sage-bg: #1f3a2c;
+  --hue-sage-ink: #bfe0cc;
+  --hue-teal-bg: #17383a;
+  --hue-teal-ink: #b4e0dc;
+  --hue-sky-bg: #18324a;
+  --hue-sky-ink: #bfe2fa;
+  --hue-lav-bg: #2b2a4a;
+  --hue-lav-ink: #cecdee;
+  --hue-butter-bg: #3d3416;
+  --hue-butter-ink: #f6e2a0;
 }
 
 * {
@@ -80,7 +167,7 @@ button {
 
 .top {
   display: grid;
-  grid-template-columns: 1fr auto;
+  grid-template-columns: 1fr auto auto auto;
   align-items: center;
   gap: 12px 0;
   margin-bottom: 20px;
@@ -134,7 +221,8 @@ button {
   border-top: 1px solid var(--border);
 }
 .nav .brand,
-.nav .nav-settings {
+.nav .nav-settings,
+.nav .nav-profile {
   display: none;
 }
 .nav-item {
@@ -211,8 +299,8 @@ button {
   gap: 14px;
   padding: 14px 18px 14px 12px;
   border-radius: var(--radius-card);
-  background: #dcefe3;
-  color: #1d5a3a;
+  background: var(--soft-bg);
+  color: var(--soft-ink);
   transition: background 0.4s;
 }
 .xu.nervous {
@@ -693,8 +781,8 @@ button {
   font-size: 16px;
 }
 .btn:disabled {
-  background: #dfe3df;
-  color: #50555a;
+  background: var(--disabled-bg);
+  color: var(--disabled-ink);
   cursor: not-allowed;
 }
 .btn.text {
@@ -705,7 +793,7 @@ button {
   color: var(--negative);
 }
 .btn.negative-fill {
-  background: var(--negative);
+  background: var(--negative-fill);
   color: #fff;
 }
 
@@ -715,7 +803,7 @@ button {
   padding: 0 14px;
   border: 1px solid var(--control);
   border-radius: var(--radius-control);
-  background: var(--surface);
+  background: var(--input-bg);
   font-size: 16px;
 }
 .input:focus {
@@ -744,7 +832,7 @@ button {
   display: flex;
   padding: 3px;
   border-radius: var(--radius-control);
-  background: #e6eae5;
+  background: var(--seg-bg);
 }
 .seg button {
   flex: 1;
@@ -780,7 +868,7 @@ button {
 }
 .chip.on {
   background: var(--text);
-  color: #fff;
+  color: var(--on-text);
 }
 .chip-two {
   display: grid;
@@ -896,7 +984,7 @@ button {
   letter-spacing: -0.02em;
 }
 .amount-value.zero {
-  color: #6f7377;
+  color: var(--zero);
 }
 .keypad {
   display: grid;
@@ -916,11 +1004,11 @@ button {
 }
 .key:active {
   transform: scale(0.94);
-  background: #dfe5de;
+  background: var(--press);
 }
 .key.op {
-  background: #dcefe3;
-  color: #1d5a3a;
+  background: var(--soft-bg);
+  color: var(--soft-ink);
 }
 .key.fn {
   font-size: 15px;
@@ -948,7 +1036,7 @@ button {
   display: flex;
   align-items: flex-end;
   justify-content: center;
-  background: rgba(27, 29, 31, 0.42);
+  background: var(--scrim);
   animation: fade 0.18s ease-out;
 }
 .sheet {
@@ -1086,8 +1174,8 @@ button {
   margin: -58px 0 0 -52px;
   padding: 8px 14px 8px 10px;
   border-radius: 999px;
-  background: var(--text);
-  color: #fff;
+  background: var(--toast-bg);
+  color: var(--toast-ink);
   font-size: 14px;
   font-weight: 600;
   white-space: nowrap;
@@ -1099,7 +1187,7 @@ button {
   height: 20px;
   border-radius: 50%;
   background: #f3d36a;
-  border: 2px solid #fff;
+  border: 2px solid var(--toast-ink);
 }
 .toast {
   position: fixed;
@@ -1113,8 +1201,8 @@ button {
   max-width: 440px;
   padding: 12px 16px;
   border-radius: 14px;
-  background: var(--text);
-  color: #fff;
+  background: var(--toast-bg);
+  color: var(--toast-ink);
   font-size: 14px;
   font-weight: 500;
   transform: translateX(-50%);
@@ -1129,7 +1217,7 @@ button {
   padding: 0 4px;
   border: 0;
   background: none;
-  color: #bfe0cc;
+  color: var(--toast-link);
   font-weight: 700;
 }
 @keyframes toast {
@@ -1208,16 +1296,23 @@ button {
     font-size: 14px;
   }
   .nav-item:hover {
-    background: #e9ece8;
+    background: var(--hover);
   }
   .nav-item[aria-current='page'] {
-    background: #e4e8e3;
+    background: var(--press);
   }
   .nav-item:nth-of-type(1) {
     order: 2;
   }
   .nav-item:nth-of-type(3) {
     order: 3;
+  }
+  .nav .nav-profile {
+    display: flex;
+    order: 4;
+  }
+  .avatar-btn {
+    display: none;
   }
   .nav .nav-settings {
     display: flex;
@@ -1229,10 +1324,15 @@ button {
     display: none;
   }
   .top {
-    grid-template-columns: 1fr;
+    grid-template-columns: 1fr auto;
   }
   .top-title {
     grid-row: 1;
+    grid-column: 1;
+  }
+  .theme-btn {
+    grid-row: 1;
+    grid-column: 2;
   }
   .main {
     max-width: 1280px;
@@ -1245,26 +1345,23 @@ button {
   }
   .home {
     grid-template-columns: minmax(0, 1fr) 360px;
-    grid-template-areas:
-      'jars xu'
-      'jars wallet'
-      'jars recent';
-    grid-template-rows: auto auto 1fr;
     align-items: start;
     align-content: start;
     column-gap: 24px;
   }
-  .xu {
-    grid-area: xu;
-  }
-  .wallet {
-    grid-area: wallet;
+  .month {
+    grid-column: 1 / -1;
   }
   .jars {
-    grid-area: jars;
+    grid-column: 1;
+    order: 1;
   }
-  .recent {
-    grid-area: recent;
+  /* the right column is its own stack, so a missing card never leaves an empty row */
+  .side {
+    display: grid;
+    gap: var(--gap);
+    grid-column: 2;
+    order: 2;
   }
   .jar-grid {
     grid-template-columns: repeat(auto-fill, minmax(176px, 1fr));
@@ -1365,8 +1462,8 @@ button {
   gap: 12px;
   padding: 12px 14px;
   border-radius: 14px;
-  background: #dcefe3;
-  color: #1d5a3a;
+  background: var(--soft-bg);
+  color: var(--soft-ink);
   font-size: 15px;
   font-weight: 600;
   cursor: pointer;
@@ -1439,8 +1536,8 @@ button {
   gap: 12px;
   padding: 14px 16px;
   border-radius: var(--radius-card);
-  background: #fbf0c8;
-  color: #5e4700;
+  background: var(--butter-bg);
+  color: var(--butter-ink);
 }
 .month b {
   font-size: 16px;
@@ -1481,25 +1578,310 @@ button {
   color: var(--text);
 }
 .refill-row .seg {
-  background: #e0e5df;
+  background: var(--seg-in-raised);
 }
 
-@media (min-width: 960px) {
-  .home.has-banner {
-    grid-template-areas:
-      'month month'
-      'jars xu'
-      'jars wallet'
-      'jars recent';
-    grid-template-rows: auto auto auto 1fr;
-  }
-  .month {
-    grid-area: month;
-  }
-}
 @media (max-width: 420px) {
   .month {
     flex-direction: column;
     align-items: stretch;
   }
+}
+
+/* ───────── editable transaction rows ───────── */
+
+.tx-li {
+  display: block;
+  padding: 0;
+}
+.tx-btn {
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 60px;
+  padding: 10px 8px;
+  margin: 0 -8px;
+  width: calc(100% + 16px);
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  text-align: left;
+  transition: background 0.12s;
+}
+.tx-btn:hover {
+  background: var(--raised);
+}
+.tx-btn:active {
+  background: var(--press);
+}
+.confirm .btn.negative-fill {
+  width: 100%;
+}
+
+/* ───────── home order on the phone, weekly pulse ───────── */
+
+/* phone: one column, and the side stack dissolves so its cards can interleave with the jars */
+.side {
+  display: contents;
+}
+.month {
+  order: 0;
+}
+.xu {
+  order: 1;
+}
+.wallet {
+  order: 2;
+}
+.jars {
+  order: 3;
+}
+.pulse {
+  order: 4;
+}
+.recent {
+  order: 5;
+}
+/* desktop: declared after the phone rules above so it wins (same specificity, later source) */
+@media (min-width: 960px) {
+  .month {
+    order: 0;
+    grid-column: 1 / -1;
+  }
+  .jars {
+    order: 1;
+    grid-column: 1;
+  }
+  .side {
+    display: grid;
+    gap: var(--gap);
+    grid-column: 2;
+    order: 2;
+  }
+  .side > * {
+    order: 0;
+  }
+}
+
+.pulse {
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+  border-radius: var(--radius-card);
+  background: var(--surface);
+  border: 1px solid var(--border);
+}
+.pulse .sec-row .sec {
+  margin-bottom: 0;
+}
+.pulse-say {
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: var(--raised);
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+.pulse-say.good {
+  background: var(--soft-bg);
+  color: var(--soft-ink);
+}
+.pulse-say.warn {
+  background: var(--coral-bg);
+  color: var(--coral-ink);
+}
+
+.bars {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 8px;
+  align-items: end;
+}
+.bar-col {
+  display: grid;
+  grid-template-rows: 16px 96px auto;
+  justify-items: center;
+  gap: 4px;
+}
+.bar-val {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.bar-track {
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  width: 100%;
+  height: 96px;
+}
+.bar {
+  display: block;
+  width: min(28px, 70%);
+  border-radius: 6px 6px 2px 2px;
+  background: var(--primary);
+  transition: height 0.5s cubic-bezier(0.3, 1.3, 0.5, 1);
+}
+.bar[data-zero='true'] {
+  background: var(--control); /* a real zero is drawn, as a flat line */
+  border-radius: 1px;
+}
+.bar-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted);
+}
+.bar-col.today .bar-label {
+  color: var(--text);
+  font-weight: 700;
+}
+
+.pulse-stats {
+  display: grid;
+  gap: 0;
+  margin: 0;
+}
+.pulse-stats > div {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 0;
+  border-top: 1px solid var(--rule);
+}
+.pulse-stats dt {
+  font-size: 14px;
+  color: var(--muted);
+}
+.pulse-stats dd {
+  margin: 0;
+  display: grid;
+  justify-items: end;
+  text-align: right;
+  font-size: 15px;
+  font-weight: 600;
+}
+.pulse-stats small {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--muted);
+}
+
+.jar-bars {
+  display: grid;
+  gap: 12px;
+}
+.jar-bars li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 4px 12px;
+  font-size: 15px;
+}
+.jb-name {
+  font-weight: 500;
+}
+.jb-amt {
+  font-weight: 600;
+}
+.jb-track {
+  grid-column: 1 / -1;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--raised);
+}
+.jb-track span {
+  display: block;
+  height: 100%;
+  border-radius: 2px;
+}
+
+/* ───────── profile ───────── */
+
+.avatar {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  border-radius: 50%;
+  background: var(--soft-bg);
+  color: var(--soft-ink);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+.avatar-btn {
+  width: 44px;
+  height: 44px;
+}
+.profile {
+  display: grid;
+  gap: 20px;
+  max-width: 560px;
+}
+.profile-head {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+.profile-name {
+  font-size: 22px;
+  line-height: 1.2;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.profile-card {
+  display: grid;
+  gap: 16px;
+  padding: 20px;
+  border-radius: var(--radius-card);
+  background: var(--surface);
+  border: 1px solid var(--border);
+}
+.locked-label {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.lock {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted);
+}
+.input.locked {
+  background: var(--raised);
+  color: var(--muted);
+  border-color: var(--border);
+  cursor: default;
+}
+.ok {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--positive);
+}
+
+/* ───────── security: recovery code ───────── */
+
+.card-title {
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.005em;
+}
+.code-box {
+  display: grid;
+  gap: 12px;
+}
+.code {
+  display: block;
+  padding: 16px;
+  border-radius: var(--radius-control);
+  background: var(--raised);
+  border: 1px dashed var(--border);
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-align: center;
+  word-break: break-all;
+  user-select: all;
 }

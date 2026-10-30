@@ -1,7 +1,7 @@
 import { fmtD } from '../lib/money';
 import { jarStatus, monthsLeft } from '../lib/jar';
 import type { Store } from '../lib/store';
-import { HUES, THEME_NAMES, type Jar } from '../lib/types';
+import { HUES, THEME_NAMES, type Jar, type Tx } from '../lib/types';
 import { IconEdit, IconPlus, IconSwap } from './icons';
 import { JarArt } from './JarArt';
 import { TxRow } from './TxRow';
@@ -14,6 +14,7 @@ export function JarDetail({
   onTransfer,
   onSpend,
   onEdit,
+  onOpenTx,
   onClose,
 }: {
   jar: Jar;
@@ -22,6 +23,7 @@ export function JarDetail({
   onTransfer: () => void;
   onSpend: () => void;
   onEdit: () => void;
+  onOpenTx: (tx: Tx) => void;
   onClose: () => void;
 }) {
   const bal = store.bal[jar.id] ?? 0;
@@ -76,7 +78,7 @@ export function JarDetail({
 
       <h3 className="label">Gần đây</h3>
       {recent.length ? (
-        <ul className="txs">{recent.map((t) => <TxRow key={t.id} tx={t} jars={store.state.jars} />)}</ul>
+        <ul className="txs">{recent.map((t) => <TxRow key={t.id} tx={t} jars={store.state.jars} onOpen={onOpenTx} />)}</ul>
       ) : (
         <p className="empty">Chưa có giao dịch nào trong hũ này.</p>
       )}

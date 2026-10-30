@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { evalExpr, fmtD } from '../lib/money';
 import type { Store } from '../lib/store';
-import { HUES, type Loc } from '../lib/types';
+import { HUES, WALLET_TINT, type Loc } from '../lib/types';
 import { AmountPad } from './AmountPad';
 import { IconArrow } from './icons';
 import type { NewTx } from './QuickAdd';
@@ -35,7 +35,7 @@ export function TransferSheet({
   const canSave = !!to && to !== from && amount > 0 && !tooMuch;
 
   const places: { id: Loc; name: string; bg: string; ink: string; bal: number }[] = [
-    { id: 'wallet', name: 'Ví tổng', bg: '#eef1f4', ink: '#3a3d40', bal: store.wallet },
+    { id: 'wallet', name: 'Ví tổng', bg: WALLET_TINT.bg, ink: WALLET_TINT.ink, bal: store.wallet },
     ...store.jars.map((j) => ({ id: j.id, name: j.name, bg: HUES[j.hue].bg, ink: HUES[j.hue].ink, bal: store.bal[j.id] ?? 0 })),
   ];
 

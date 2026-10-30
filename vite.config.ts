@@ -8,7 +8,7 @@ export default defineConfig({
   plugins: [react()],
   server: {
     host: true,
-    proxy: { '/api': { target: 'http://127.0.0.1:8787', changeOrigin: false } },
+    proxy: { '/api': { target: process.env.SYM_API ?? 'http://127.0.0.1:8787', changeOrigin: false } },
     // the SQLite file changes on every save; watching it would reload the page each time
     watch: { ignored: ['**/server/data/**', '**/.taste-skill/**'] },
   },

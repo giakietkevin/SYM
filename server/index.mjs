@@ -42,9 +42,24 @@ db.exec(`
   );
 `);
 
+// accounts created before profiles existed get the new columns, empty until the person fills them in
+const userCols = db.prepare('PRAGMA table_info(users)').all().map((c) => c.name);
+for (const col of ['full_name', 'email', 'phone', 'recovery']) if (!userCols.includes(col)) db.exec(`ALTER TABLE users ADD COLUMN ${col} TEXT`);
+// one email, one account (NULLs, i.e. old accounts not yet completed, do not collide)
+db.exec('CREATE UNIQUE INDEX IF NOT EXISTS users_email ON users(email)');
+
 const q = {
   userByName: db.prepare('SELECT * FROM users WHERE username = ?'),
-  insertUser: db.prepare('INSERT INTO users (username, salt, hash, created) VALUES (?, ?, ?, ?)'),
+  userByEmail: db.prepare('SELECT * FROM users WHERE email = ?'),
+  userById: db.prepare('SELECT * FROM users WHERE id = ?'),
+  insertUser: db.prepare('INSERT INTO users (username, salt, hash, created, full_name, email, phone) VALUES (?, ?, ?, ?, ?, ?, ?)'),
+  setPassword: db.prepare('UPDATE users SET salt = ?, hash = ? WHERE id = ?'),
+  setRecovery: db.prepare('UPDATE users SET recovery = ? WHERE id = ?'),
+  otherSessions: db.prepare('DELETE FROM sessions WHERE user_id = ? AND token_hash <> ?'),
+  allSessions: db.prepare('DELETE FROM sessions WHERE user_id = ?'),
+  setName: db.prepare('UPDATE users SET full_name = ? WHERE id = ?'),
+  // email and phone are set once: only while both are still empty
+  setContact: db.prepare('UPDATE users SET email = ?, phone = ? WHERE id = ? AND email IS NULL AND phone IS NULL'),
   insertSession: db.prepare('INSERT INTO sessions (token_hash, user_id, expires) VALUES (?, ?, ?)'),
   sessionUser: db.prepare(
     'SELECT users.id AS id, users.username AS username FROM sessions JOIN users ON users.id = sessions.user_id WHERE token_hash = ? AND expires > ?',
@@ -91,11 +106,15 @@ async function readJson(req) {
     if (size > MAX_BODY) throw new HttpError(413, 'Dữ liệu quá lớn');
     chunks.push(c);
   }
+  let body;
   try {
-    return JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}');
+    body = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}');
   } catch {
     throw new HttpError(400, 'JSON không hợp lệ');
   }
+  // every handler reads fields off the body: null, a number or a list would throw a TypeError (a 500)
+  if (body === null || typeof body !== 'object' || Array.isArray(body)) throw new HttpError(400, 'Dữ liệu không hợp lệ');
+  return body;
 }
 
 function cookies(req) {
@@ -115,11 +134,11 @@ function sessionCookie(req, token, maxAgeSec) {
   return parts.join('; ');
 }
 
-function startSession(req, res, userId, username) {
+function startSession(req, res, user, extra = {}) {
   const token = randomBytes(32).toString('base64url');
   q.purgeSessions.run(Date.now());
-  q.insertSession.run(sha(token), userId, Date.now() + SESSION_DAYS * 86400_000);
-  send(res, 200, { username }, { 'Set-Cookie': sessionCookie(req, token, SESSION_DAYS * 86400) });
+  q.insertSession.run(sha(token), user.id, Date.now() + SESSION_DAYS * 86400_000);
+  send(res, 200, { ...profileOf(user), ...extra }, { 'Set-Cookie': sessionCookie(req, token, SESSION_DAYS * 86400) });
 }
 
 function currentUser(req) {
@@ -164,6 +183,66 @@ function throttle(key, limit, windowMs) {
 
 const ip = (req) => req.socket.remoteAddress ?? 'unknown';
 
+const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+
+function cleanEmail(v) {
+  const email = String(v ?? '').trim().toLowerCase();
+  if (!EMAIL.test(email) || email.length > 254) throw new HttpError(400, 'Email không hợp lệ');
+  return email;
+}
+
+/** "+84 912 345 678" and "0912.345.678" are the same number: stored as 0912345678. */
+function cleanPhone(v) {
+  let phone = String(v ?? '').replace(/[\s.\-()]/g, '');
+  if (phone.startsWith('+84')) phone = '0' + phone.slice(3);
+  if (!/^\+?\d{9,15}$/.test(phone)) throw new HttpError(400, 'Số điện thoại không hợp lệ');
+  return phone;
+}
+
+function cleanName(v) {
+  const name = String(v ?? '').trim().replace(/\s+/g, ' ');
+  if (name.length > 80) throw new HttpError(400, 'Họ tên tối đa 80 ký tự');
+  return name;
+}
+
+const profileOf = (u) => ({
+  username: u.username,
+  fullName: u.full_name ?? '',
+  email: u.email ?? null,
+  phone: u.phone ?? null,
+  hasRecovery: !!u.recovery,
+});
+
+// ───────── recovery code ─────────
+// No email service here, so a forgotten password is recovered with a code shown once, at sign-up (or when
+// the person makes a new one). 16 symbols of 32 = 80 bits: stored as a plain sha256, there is nothing to brute-force.
+
+const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+
+function newRecoveryCode() {
+  const bytes = randomBytes(16);
+  let raw = '';
+  for (const b of bytes) raw += CODE_CHARS[b & 31];
+  return raw.match(/.{4}/g).join('-');
+}
+
+const codeHash = (code) => sha(String(code ?? '').toUpperCase().replace(/[^A-Z0-9]/g, ''));
+
+/** Stores a fresh code for the user and returns it in the form to show (the only time it is readable). */
+function issueRecovery(userId) {
+  const code = newRecoveryCode();
+  q.setRecovery.run(codeHash(code), userId);
+  return code;
+}
+
+const sameHash = (a, b) => a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b));
+
+function newPassword(v) {
+  const password = String(v ?? '');
+  if (password.length < 8 || password.length > 128) throw new HttpError(400, 'Mật khẩu cần từ 8 đến 128 ký tự');
+  return password;
+}
+
 function validCredentials(body) {
   const username = String(body.username ?? '').trim().toLowerCase();
   const password = String(body.password ?? '');
@@ -194,13 +273,28 @@ async function api(req, res, path) {
 
   if (method === 'POST' && path === '/api/register') {
     const mark = throttle(`reg|${ip(req)}`, 10, 3600_000);
-    const { username, password } = validCredentials(await readJson(req));
+    const body = await readJson(req);
+    const { username, password } = validCredentials(body);
+    const email = cleanEmail(body.email);
+    const phone = cleanPhone(body.phone);
+    const fullName = cleanName(body.fullName);
     mark();
     if (q.userByName.get(username)) throw new HttpError(409, 'Tên đăng nhập đã có người dùng');
+    if (q.userByEmail.get(email)) throw new HttpError(409, 'Email này đã được dùng cho một tài khoản khác');
     const salt = randomBytes(16);
     const hash = await hashPassword(password, salt);
-    const r = q.insertUser.run(username, salt, hash, Date.now());
-    return startSession(req, res, Number(r.lastInsertRowid), username);
+    let id;
+    try {
+      id = Number(q.insertUser.run(username, salt, hash, Date.now(), fullName, email, phone).lastInsertRowid);
+    } catch (e) {
+      // two sign-ups racing for the same email or username: the database has the last word
+      if (/UNIQUE/i.test(String(e.message))) {
+        throw new HttpError(409, /email/i.test(String(e.message)) ? 'Email này đã được dùng cho một tài khoản khác' : 'Tên đăng nhập đã có người dùng');
+      }
+      throw e;
+    }
+    const created = q.userById.get(id);
+    return startSession(req, res, created, { recoveryCode: issueRecovery(id) });
   }
 
   if (method === 'POST' && path === '/api/login') {
@@ -209,7 +303,7 @@ async function api(req, res, path) {
     const password = String(body.password ?? '');
     const key = `login|${ip(req)}|${username}`;
     const fail = throttle(key, 5, 10 * 60_000);
-    const user = q.userByName.get(username);
+    const user = q.userByName.get(username) ?? (username.includes('@') ? q.userByEmail.get(username) : undefined);
     // always hash, so a missing user costs the same as a wrong password
     const salt = user ? user.salt : Buffer.alloc(16);
     const hash = await hashPassword(password.slice(0, 128), salt);
@@ -218,7 +312,66 @@ async function api(req, res, path) {
       throw new HttpError(401, 'Sai tên đăng nhập hoặc mật khẩu');
     }
     hits.delete(key);
-    return startSession(req, res, user.id, user.username);
+    return startSession(req, res, user);
+  }
+
+  // change the password while signed in: needs the current one; every other device is signed out
+  if (method === 'POST' && path === '/api/password') {
+    const session = requireUser(req);
+    const body = await readJson(req);
+    const key = `pw|${session.id}`;
+    const fail = throttle(key, 5, 10 * 60_000);
+    const user = q.userById.get(session.id);
+    const ok = timingSafeEqual(await hashPassword(String(body.current ?? '').slice(0, 128), user.salt), user.hash);
+    if (!ok) {
+      fail();
+      throw new HttpError(403, 'Mật khẩu hiện tại không đúng');
+    }
+    const next = newPassword(body.next);
+    if (next === String(body.current)) throw new HttpError(400, 'Mật khẩu mới phải khác mật khẩu cũ');
+    const salt = randomBytes(16);
+    q.setPassword.run(salt, await hashPassword(next, salt), user.id);
+    q.otherSessions.run(user.id, sha(cookies(req).sym_session ?? ''));
+    hits.delete(key);
+    return send(res, 200, { ok: true });
+  }
+
+  // a new recovery code replaces the old one (accounts made before codes existed get theirs here)
+  if (method === 'POST' && path === '/api/recovery-code') {
+    const session = requireUser(req);
+    const body = await readJson(req);
+    const key = `rc|${session.id}`;
+    const fail = throttle(key, 5, 10 * 60_000);
+    const user = q.userById.get(session.id);
+    if (!timingSafeEqual(await hashPassword(String(body.password ?? '').slice(0, 128), user.salt), user.hash)) {
+      fail();
+      throw new HttpError(403, 'Mật khẩu không đúng');
+    }
+    hits.delete(key);
+    return send(res, 200, { recoveryCode: issueRecovery(user.id) });
+  }
+
+  // forgotten password: username or email + recovery code -> new password. Same answer for every kind of miss.
+  if (method === 'POST' && path === '/api/reset') {
+    const body = await readJson(req);
+    const who = String(body.username ?? '').trim().toLowerCase();
+    const fail = throttle(`reset|${ip(req)}|${who}`, 5, 10 * 60_000);
+    const failAny = throttle(`reset|${ip(req)}`, 20, 3600_000);
+    const password = newPassword(body.password);
+    const user = q.userByName.get(who) ?? (who.includes('@') ? q.userByEmail.get(who) : undefined);
+    const sent = codeHash(body.code);
+    const ok = !!user?.recovery && sameHash(sent, user.recovery);
+    if (!ok) {
+      fail();
+      failAny();
+      throw new HttpError(401, 'Tên đăng nhập, email hoặc mã khôi phục không đúng');
+    }
+    const salt = randomBytes(16);
+    q.setPassword.run(salt, await hashPassword(password, salt), user.id);
+    q.allSessions.run(user.id);
+    hits.delete(`reset|${ip(req)}|${who}`);
+    const code = issueRecovery(user.id); // a code works once
+    return startSession(req, res, q.userById.get(user.id), { recoveryCode: code });
   }
 
   if (method === 'POST' && path === '/api/logout') {
@@ -228,7 +381,40 @@ async function api(req, res, path) {
   }
 
   if (method === 'GET' && path === '/api/me') {
-    return send(res, 200, { username: requireUser(req).username });
+    return send(res, 200, profileOf(q.userById.get(requireUser(req).id)));
+  }
+
+  if (method === 'PUT' && path === '/api/profile') {
+    const session = requireUser(req);
+    const body = await readJson(req);
+    const user = q.userById.get(session.id);
+
+    if (body.fullName !== undefined) q.setName.run(cleanName(body.fullName), user.id);
+
+    const wantsEmail = body.email !== undefined && body.email !== null;
+    const wantsPhone = body.phone !== undefined && body.phone !== null;
+    if (wantsEmail || wantsPhone) {
+      const email = wantsEmail ? cleanEmail(body.email) : null;
+      const phone = wantsPhone ? cleanPhone(body.phone) : null;
+      if (user.email || user.phone) {
+        // already set: they may be sent back unchanged, never changed
+        if ((email && email !== user.email) || (phone && phone !== user.phone)) {
+          throw new HttpError(403, 'Email và số điện thoại không thể thay đổi');
+        }
+      } else {
+        // an account from before profiles existed completes it once, with both
+        if (!email || !phone) throw new HttpError(400, 'Cần nhập cả email và số điện thoại');
+        const taken = q.userByEmail.get(email);
+        if (taken && taken.id !== user.id) throw new HttpError(409, 'Email này đã được dùng cho một tài khoản khác');
+        try {
+          q.setContact.run(email, phone, user.id);
+        } catch (e) {
+          if (/UNIQUE/i.test(String(e.message))) throw new HttpError(409, 'Email này đã được dùng cho một tài khoản khác');
+          throw e;
+        }
+      }
+    }
+    return send(res, 200, profileOf(q.userById.get(user.id)));
   }
 
   if (method === 'GET' && path === '/api/data') {

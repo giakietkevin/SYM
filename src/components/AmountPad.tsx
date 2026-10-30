@@ -65,6 +65,7 @@ export function AmountPad({
         </div>
       </div>
 
+      {(shortcuts.length > 0 || extraShortcut) && (
       <div className="chips" role="group" aria-label="Số tiền nhanh">
         {shortcuts.map((v) => (
           <button key={v} type="button" className="chip" onClick={() => { haptic('tap'); onChange(String(v)); }}>
@@ -77,6 +78,7 @@ export function AmountPad({
           </button>
         )}
       </div>
+      )}
 
       <div className="keypad" role="group" aria-label="Bàn phím tính toán">
         {KEYS.map((k) => (

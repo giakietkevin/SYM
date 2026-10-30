@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { evalExpr, fmtD, short } from '../lib/money';
 import { ruleTotal } from '../lib/split';
 import type { Store } from '../lib/store';
-import { HUES, type Jar, type Tx } from '../lib/types';
+import { HUES, WALLET_TINT, type Jar, type Tx } from '../lib/types';
 import { AmountPad } from './AmountPad';
 import { Seg, Sheet } from './ui';
 
@@ -128,7 +128,7 @@ export function QuickAdd({
         {type === 'expense' && spendJars.length === 0 && <p className="empty">Chưa có hũ chi tiêu. Tạo một hũ ở màn hình Tổng quan trước nhé.</p>}
         <div className="chips" role="radiogroup" aria-label={type === 'expense' ? 'Chọn hũ' : 'Chọn nơi nhận'}>
           {type === 'income' && (
-            <JarChip label="Ví tổng" sub="chưa chia" bg="#eef1f4" ink="#3a3d40" on={dest === 'wallet'} onClick={() => setDest('wallet')} />
+            <JarChip label="Ví tổng" sub="chưa chia" bg={WALLET_TINT.bg} ink={WALLET_TINT.ink} on={dest === 'wallet'} onClick={() => setDest('wallet')} />
           )}
           {(type === 'expense' ? spendJars : store.jars).map((j) => {
             const h = HUES[j.hue];

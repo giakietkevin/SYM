@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import type { SyncStatus } from '../lib/sync';
-import { Sheet, Toggle } from './ui';
+import type { ThemePref } from '../lib/theme';
+import { Seg, Sheet, Toggle } from './ui';
 
 const STATUS: Record<SyncStatus, string> = {
   saved: 'Đã lưu lên máy chủ',
@@ -14,6 +15,8 @@ export function SettingsSheet({
   onLogout,
   ruleSummary,
   onSplit,
+  themePref,
+  onTheme,
   sound,
   haptics,
   onSound,
@@ -26,6 +29,8 @@ export function SettingsSheet({
   onLogout: () => void;
   ruleSummary: string;
   onSplit: () => void;
+  themePref: ThemePref;
+  onTheme: (p: ThemePref) => void;
   sound: boolean;
   haptics: boolean;
   onSound: (v: boolean) => void;
@@ -56,6 +61,20 @@ export function SettingsSheet({
           Mở
         </button>
       </div>
+      <section className="field">
+        <h3 className="label">Giao diện</h3>
+        <Seg
+          label="Giao diện"
+          value={themePref}
+          onChange={onTheme}
+          options={[
+            { value: 'system', label: 'Tự động' },
+            { value: 'light', label: 'Sáng' },
+            { value: 'dark', label: 'Tối' },
+          ]}
+        />
+        <p className="hint">Tự động theo cài đặt của máy. Lựa chọn này chỉ áp dụng cho thiết bị đang dùng.</p>
+      </section>
       <div className="setting">
         <div>
           <b>Âm thanh</b>

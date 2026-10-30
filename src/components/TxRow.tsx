@@ -1,5 +1,5 @@
 import { fmtSigned } from '../lib/money';
-import { HUES, type Jar, type Loc, type Tx } from '../lib/types';
+import { HUES, WALLET_TINT, type Jar, type Loc, type Tx } from '../lib/types';
 
 export const time = (ts: number) => new Date(ts).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', hour12: false });
 
@@ -20,11 +20,14 @@ export function locName(loc: Loc | undefined, jars: Jar[]) {
   return jars.find((j) => j.id === loc)?.name ?? 'Hũ đã đóng';
 }
 
-export function TxRow({ tx, jars }: { tx: Tx; jars: Jar[] }) {
+/** Lines that touch a closed jar are history only: changing them would reopen a jar that is gone. */
+export const isLocked = (tx: Tx, jars: Jar[]) => [tx.from, tx.to].some((l) => l && l !== 'wallet' && jars.find((j) => j.id === l)?.deleted);
+
+export function TxRow({ tx, jars, onOpen }: { tx: Tx; jars: Jar[]; onOpen?: (tx: Tx) => void }) {
   // the mark follows the jar the line is about: the one money left, or the one it reached
   const subject = tx.type === 'income' ? tx.to : tx.type === 'expense' ? tx.from : tx.to === 'wallet' ? tx.from : tx.to;
   const jar = jars.find((j) => j.id === subject);
-  const tint = jar ? HUES[jar.hue] : { bg: '#eef1f4', ink: '#3a3d40' };
+  const tint = jar ? HUES[jar.hue] : WALLET_TINT;
   const initial = (locName(subject, jars)[0] ?? '·').toUpperCase();
 
   const title = tx.note || (tx.type === 'income' ? 'Thu nhập' : tx.type === 'expense' ? 'Chi tiêu' : 'Chuyển tiền');
@@ -35,8 +38,8 @@ export function TxRow({ tx, jars }: { tx: Tx; jars: Jar[] }) {
         ? `Vào ${locName(tx.to, jars)}`
         : locName(tx.from, jars);
 
-  return (
-    <li className="tx">
+  const body = (
+    <>
       <span className="tx-mark" style={{ background: tint.bg, color: tint.ink }} aria-hidden="true">
         {initial}
       </span>
@@ -47,6 +50,15 @@ export function TxRow({ tx, jars }: { tx: Tx; jars: Jar[] }) {
         </span>
       </span>
       <span className={`tx-amt num ${tx.type}`}>{fmtSigned(tx.amount, tx.type === 'income' ? '+' : tx.type === 'expense' ? '−' : '')}</span>
+    </>
+  );
+
+  if (!onOpen || isLocked(tx, jars)) return <li className="tx">{body}</li>;
+  return (
+    <li className="tx tx-li">
+      <button className="tx-btn" onClick={() => onOpen(tx)} aria-label={`Sửa giao dịch: ${title}, ${fmtSigned(tx.amount, '')}`}>
+        {body}
+      </button>
     </li>
   );
 }

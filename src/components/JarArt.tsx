@@ -13,7 +13,7 @@ interface Props {
 const WAVE =
   'M0 5 q15 -9 30 0 t30 0 t30 0 t30 0 t30 0 t30 0 t30 0 t30 0 t30 0 t30 0 t30 0 t30 0 V220 H0 Z';
 
-const INK = '#1b1d1f';
+const INK = 'var(--art-ink)';
 
 /** Level of the liquid in viewBox units for a shape spanning [bottom - height, bottom]. */
 function level(fill: number, bottom: number, height: number) {
@@ -40,7 +40,7 @@ function Liquid({ clip, fill, bottom, height, a, b }: { clip: string; fill: numb
 export function JarArt({ theme, hue, fill, low }: Props) {
   const uid = useId().replace(/:/g, '');
   const c = low ? CORAL : HUES[hue];
-  const glass = 'rgba(255,255,255,.62)';
+  const glass = 'var(--glass)';
 
   if (theme === 'plant') return <Plant hue={hue} fill={fill} />;
   if (theme === 'tree') return <Tree fill={fill} />;
@@ -228,7 +228,7 @@ const SHAPES: Partial<Record<Theme, Shape>> = {
     body: 'M60 14 L106 54 H95 V106 H25 V54 H14 Z',
     bottom: 106,
     height: 92,
-    behind: () => <path d="M78 34 V20 H90 V46" {...line} fill="rgba(255,255,255,.62)" />,
+    behind: () => <path d="M78 34 V20 H90 V46" {...line} fill="var(--glass)" />,
     top: (c) => <path d="M50 106 V86 a10 10 0 0 1 20 0 V106" {...line} fill={c.pale} />,
   },
   heart: {

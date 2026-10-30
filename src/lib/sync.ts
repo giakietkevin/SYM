@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ApiError, api } from './api';
+import { ApiError, api, type Profile } from './api';
 import { mergeStates, parseState } from './store';
 import type { State } from './types';
 
@@ -17,8 +17,28 @@ export function readCache(user: string): { state: State; rev: number } | null {
   }
 }
 
+const profileKey = (user: string) => `sym.profile.${user}`;
+
+export function readProfileCache(user: string): Profile | null {
+  try {
+    const p = JSON.parse(localStorage.getItem(profileKey(user)) ?? 'null');
+    return p && typeof p.username === 'string' ? (p as Profile) : null;
+  } catch {
+    return null;
+  }
+}
+
+export function writeProfileCache(p: Profile) {
+  try {
+    localStorage.setItem(profileKey(p.username), JSON.stringify(p));
+  } catch {
+    /* blocked */
+  }
+}
+
 export function clearCache(user: string) {
   try {
+    localStorage.removeItem(profileKey(user));
     localStorage.removeItem(cacheKey(user));
   } catch {
     /* blocked */

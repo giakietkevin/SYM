@@ -36,10 +36,34 @@ export interface Tx {
   note: string;
   /** lines created together (an income and its split, a month refill) share one id so they undo together */
   batch?: string;
+  /** tombstone: removed by the user, kept so a merge from another device cannot resurrect it */
+  deleted?: boolean;
 }
 
 /** Percent of an income sent to each jar; whatever is not assigned stays in the wallet. */
 export type Rule = Record<string, number>;
+
+/**
+ * A monthly line (rent, a subscription, a salary). It is never a balance: each month it writes one ordinary
+ * ledger line with the id `r:<id>:<YYYY-MM>`, so two devices that both write it end up with the same line.
+ */
+export interface Recurring {
+  id: string;
+  type: 'expense' | 'income';
+  amount: number;
+  /** expense: where it is paid from */
+  from?: Loc;
+  /** income: where it lands */
+  to?: Loc;
+  note: string;
+  /** day of the month, 1-31; a short month uses its last day */
+  day: number;
+  /** first date it may apply, YYYY-MM-DD */
+  start: string;
+  /** income into the wallet follows the auto-split rule */
+  split?: boolean;
+  deleted?: boolean;
+}
 
 export interface State {
   jars: Jar[];
@@ -49,18 +73,26 @@ export interface State {
   rule?: Rule;
   /** last month (YYYY-MM) whose spending jars were refilled or skipped */
   rolled?: string;
+  recurring?: Recurring[];
 }
 
+/**
+ * bg / ink are CSS variables so the pastel tiles can darken with the theme (see styles.css).
+ * mid / pale are the liquid colours drawn inside the jar art and stay the same in both themes.
+ */
 export const HUES: Record<Hue, { name: string; bg: string; ink: string; mid: string; pale: string }> = {
-  sage: { name: 'Xanh sage', bg: '#dcefe3', ink: '#1d5a3a', mid: '#6db08a', pale: '#bfe0cc' },
-  teal: { name: 'Xanh ngọc', bg: '#d5efec', ink: '#0f4f4c', mid: '#5fb3ac', pale: '#b4e0dc' },
-  sky: { name: 'Xanh trời', bg: '#dcf1ff', ink: '#0a3a80', mid: '#6bb4e8', pale: '#bfe2fa' },
-  lav: { name: 'Tím lavender', bg: '#e5e4f5', ink: '#34335f', mid: '#a09fd8', pale: '#cecdee' },
-  butter: { name: 'Vàng bơ', bg: '#fbf0c8', ink: '#5e4700', mid: '#e9c34f', pale: '#f6e2a0' },
+  sage: { name: 'Xanh sage', bg: 'var(--hue-sage-bg)', ink: 'var(--hue-sage-ink)', mid: '#6db08a', pale: '#bfe0cc' },
+  teal: { name: 'Xanh ngọc', bg: 'var(--hue-teal-bg)', ink: 'var(--hue-teal-ink)', mid: '#5fb3ac', pale: '#b4e0dc' },
+  sky: { name: 'Xanh trời', bg: 'var(--hue-sky-bg)', ink: 'var(--hue-sky-ink)', mid: '#6bb4e8', pale: '#bfe2fa' },
+  lav: { name: 'Tím lavender', bg: 'var(--hue-lav-bg)', ink: 'var(--hue-lav-ink)', mid: '#a09fd8', pale: '#cecdee' },
+  butter: { name: 'Vàng bơ', bg: 'var(--hue-butter-bg)', ink: 'var(--hue-butter-ink)', mid: '#e9c34f', pale: '#f6e2a0' },
 };
 
 /** Soft coral is reserved for "running low", never a jar colour. */
-export const CORAL = { bg: '#ffe2dc', ink: '#8a2a18', mid: '#f08a73', pale: '#f9c3b6' };
+export const CORAL = { bg: 'var(--coral-bg)', ink: 'var(--coral-ink)', mid: '#f08a73', pale: '#f9c3b6' };
+
+/** The wallet is not a jar: a neutral tint. */
+export const WALLET_TINT = { bg: 'var(--wallet-bg)', ink: 'var(--wallet-ink)' };
 
 export const THEME_NAMES: Record<Theme, string> = {
   jar: 'Hũ nước',

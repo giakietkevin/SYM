@@ -1,10 +1,16 @@
 import { useMemo, useReducer } from 'react';
+import { balanceOf, live, mergeStates } from './ledger';
 import { seed } from './seed';
-import type { Jar, Loc, Rule, State, Tx } from './types';
+import type { Jar, Loc, Recurring, Rule, State, Tx } from './types';
 
 type Action =
   | { t: 'addTx'; tx: Tx }
+  | { t: 'addTxs'; txs: Tx[] }
+  | { t: 'saveRecurring'; item: Recurring }
+  | { t: 'removeRecurring'; id: string }
   | { t: 'undoTx'; id: string }
+  | { t: 'updateTx'; tx: Tx }
+  | { t: 'setDeleted'; ids: string[]; deleted: boolean }
   | { t: 'setRule'; rule: Rule }
   | { t: 'setRolled'; month: string | undefined }
   | { t: 'saveJar'; jar: Jar }
@@ -15,21 +21,30 @@ type Action =
 
 export const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-3);
 
-export function balanceOf(txs: Tx[], loc: Loc): number {
-  let b = 0;
-  for (const t of txs) {
-    if (t.to === loc) b += t.amount;
-    if (t.from === loc) b -= t.amount;
-  }
-  return b;
-}
+export { balanceOf, mergeStates };
 
 function reducer(s: State, a: Action): State {
   switch (a.t) {
     case 'addTx':
       return { ...s, txs: [...s.txs, a.tx] };
+    case 'addTxs':
+      return { ...s, txs: [...s.txs, ...a.txs] };
+    case 'saveRecurring': {
+      const list = s.recurring ?? [];
+      return { ...s, recurring: list.some((r) => r.id === a.item.id) ? list.map((r) => (r.id === a.item.id ? a.item : r)) : [...list, a.item] };
+    }
+    case 'removeRecurring':
+      // a tombstone, like jars and ledger lines
+      return { ...s, recurring: (s.recurring ?? []).map((r) => (r.id === a.id ? { ...r, deleted: true } : r)) };
     case 'undoTx':
-      return { ...s, txs: s.txs.filter((x) => x.id !== a.id && x.batch !== a.id) };
+      // a tombstone, not a removal: another device's copy must not bring it back
+      return { ...s, txs: s.txs.map((x) => (x.id === a.id || x.batch === a.id ? { ...x, deleted: true } : x)) };
+    case 'updateTx':
+      return { ...s, txs: s.txs.map((x) => (x.id === a.tx.id ? a.tx : x)) };
+    case 'setDeleted': {
+      const ids = new Set(a.ids);
+      return { ...s, txs: s.txs.map((x) => (ids.has(x.id) ? { ...x, deleted: a.deleted || undefined } : x)) };
+    }
     case 'setRule':
       return { ...s, rule: a.rule };
     case 'setRolled':
@@ -69,26 +84,7 @@ export function parseState(x: unknown): State | null {
     haptics: s.haptics !== false,
     rule: s.rule && typeof s.rule === 'object' ? s.rule : undefined,
     rolled: typeof s.rolled === 'string' ? s.rolled : undefined,
-  };
-}
-
-/**
- * Two devices edited from the same starting point. The ledger only ever grows and every line has a
- * unique id, so the union of both is the truth. Jars: this device's version wins, a deletion on
- * either side sticks. (Known edge: an undo done on one side can be brought back by the other.)
- */
-export function mergeStates(local: State, remote: State): State {
-  const txs = new Map(remote.txs.map((t) => [t.id, t]));
-  for (const t of local.txs) txs.set(t.id, t);
-  const jars = new Map(remote.jars.map((j) => [j.id, j]));
-  for (const j of local.jars) jars.set(j.id, { ...j, deleted: j.deleted || jars.get(j.id)?.deleted });
-  return {
-    jars: [...jars.values()],
-    txs: [...txs.values()],
-    sound: local.sound,
-    haptics: local.haptics,
-    rule: local.rule ?? remote.rule,
-    rolled: [local.rolled, remote.rolled].filter(Boolean).sort().pop(), // YYYY-MM sorts as time
+    recurring: Array.isArray(s.recurring) ? s.recurring : undefined,
   };
 }
 
@@ -101,10 +97,10 @@ export function useStore(initial: State) {
     const funded: Record<string, boolean> = {};
     for (const j of state.jars) {
       bal[j.id] = balanceOf(state.txs, j.id);
-      funded[j.id] = bal[j.id] !== 0 || state.txs.some((t) => t.to === j.id);
+      funded[j.id] = bal[j.id] !== 0 || state.txs.some((t) => !t.deleted && t.to === j.id);
     }
     const wallet = balanceOf(state.txs, 'wallet');
-    const txs = [...state.txs].sort((a, b) => b.ts - a.ts);
+    const txs = live(state.txs).sort((a, b) => b.ts - a.ts);
     return { jars, bal, funded, wallet, txs };
   }, [state]);
 

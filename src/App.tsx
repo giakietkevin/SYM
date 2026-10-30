@@ -2,13 +2,16 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { JarCard, type Fx } from './components/JarCard';
 import { JarDetail } from './components/JarDetail';
 import { JarEditor } from './components/JarEditor';
-import { IconGear, IconHome, IconList, IconPlus, Logo } from './components/icons';
+import { IconGear, IconHome, IconList, IconMoon, IconPlus, IconSun, IconUser, Logo } from './components/icons';
 import { Mascot } from './components/Mascot';
 import { QuickAdd, type NewTx } from './components/QuickAdd';
 import { SettingsSheet } from './components/SettingsSheet';
 import { TransferSheet } from './components/TransferSheet';
 import { MonthSheet } from './components/MonthSheet';
 import { SplitSheet } from './components/SplitSheet';
+import { PulseCard, PulseSheet } from './components/Pulse';
+import { computePulse } from './lib/pulse';
+import { TxSheet } from './components/TxSheet';
 import { TxRow, dayLabel, locName } from './components/TxRow';
 import { Money } from './components/ui';
 import { chime, haptic, pop, setFeedbackFlags, soft } from './lib/feedback';
@@ -20,8 +23,12 @@ import { parseState, uid, useStore } from './lib/store';
 import { seed } from './lib/seed';
 import { monthKey, type RefillStep } from './lib/rollover';
 import { planSplit, ruleTotal } from './lib/split';
-import { clearCache, readCache, useSync } from './lib/sync';
+import { clearCache, readCache, readProfileCache, useSync, writeProfileCache } from './lib/sync';
+import type { Profile } from './lib/api';
+import { Avatar, CompleteProfile, ProfileScreen } from './components/Profile';
 import { AuthScreen } from './components/AuthScreen';
+import { RecoveryScreen } from './components/Recovery';
+import { useTheme, type Theme, type ThemePref } from './lib/theme';
 import type { Loc, Rule, State, Tx } from './lib/types';
 
 type Sheet =
@@ -32,18 +39,32 @@ type Sheet =
   | { k: 'settings' }
   | { k: 'split' }
   | { k: 'month' }
+  | { k: 'tx'; id: string }
+  | { k: 'pulse' }
   | null;
 
-type Screen = 'home' | 'history';
+type Screen = 'home' | 'history' | 'profile';
 type Filter = 'all' | 'expense' | 'income' | 'transfer';
 
 function Main({
   user,
   initial,
   initialRev,
+  profile,
+  onProfile,
   onLogout,
   onUnauthorized,
+  themePref,
+  theme,
+  onTheme,
+  onToggleTheme,
 }: {
+  profile: Profile;
+  onProfile: (p: Profile) => void;
+  themePref: ThemePref;
+  theme: Theme;
+  onTheme: (p: ThemePref) => void;
+  onToggleTheme: () => void;
   user: string;
   initial: State;
   initialRev: number;
@@ -210,6 +231,7 @@ function Main({
     return w;
   }, [spendJars, bal, store.funded]);
 
+  const pulse = useMemo(() => computePulse(txs, jars), [txs, jars]);
   const mood = worst ? 'nervous' : 'happy';
   const needsRefill = !!state.rolled && state.rolled < monthKey() && spendJars.length > 0;
   const ruleSum = ruleTotal(state.rule, jars);
@@ -221,6 +243,27 @@ function Main({
   const incomeMonth = monthTx.filter((t) => t.type === 'income').reduce((s, t) => s + t.amount, 0);
 
   const dateLine = now.toLocaleDateString('vi-VN', { weekday: 'long', day: 'numeric', month: 'long' });
+
+  const openTx = (t: Tx) => setSheet({ k: 'tx', id: t.id });
+
+  /** Edit a past line. The previous version is kept for one-tap undo. */
+  const saveTx = (next: Tx) => {
+    const prev = state.txs.find((x) => x.id === next.id);
+    if (!prev) return;
+    dispatch({ t: 'updateTx', tx: next });
+    soft();
+    haptic('success');
+    setSheet(null);
+    say('Đã cập nhật giao dịch', () => dispatch({ t: 'updateTx', tx: prev }));
+  };
+
+  const removeTxs = (ids: string[]) => {
+    dispatch({ t: 'setDeleted', ids, deleted: true });
+    pop();
+    haptic('warn');
+    setSheet(null);
+    say(ids.length > 1 ? `Đã xóa ${ids.length} dòng giao dịch` : 'Đã xóa giao dịch', () => dispatch({ t: 'setDeleted', ids, deleted: false }));
+  };
 
   const openJar = (id: string) => guard(() => setSheet({ k: 'jar', id }));
 
@@ -247,6 +290,7 @@ function Main({
     </button>
   );
 
+  const editTx = sheet?.k === 'tx' ? txs.find((t) => t.id === sheet.id) : undefined;
   const detailJar = sheet?.k === 'jar' ? jars.find((j) => j.id === sheet.id) : undefined;
   const editJar = sheet?.k === 'edit' && sheet.id ? jars.find((j) => j.id === sheet.id) : undefined;
 
@@ -278,6 +322,10 @@ function Main({
           <IconList />
           <span>Lịch sử</span>
         </button>
+        <button className="nav-item nav-profile" aria-current={screen === 'profile' ? 'page' : undefined} onClick={() => { soft(); setScreen('profile'); }}>
+          <IconUser />
+          <span>Hồ sơ</span>
+        </button>
         <button className="nav-item nav-settings" onClick={() => setSheet({ k: 'settings' })}>
           <IconGear />
           <span>Cài đặt</span>
@@ -291,9 +339,11 @@ function Main({
             <b>SYM</b>
           </div>
           <div className="top-title">
-            <h1>{screen === 'home' ? 'Tổng quan' : 'Lịch sử'}</h1>
+            <h1>{screen === 'home' ? 'Tổng quan' : screen === 'history' ? 'Lịch sử' : 'Hồ sơ'}</h1>
             <p className="num">
-              {screen === 'home' ? (
+              {screen === 'profile' ? (
+                <>Thông tin tài khoản của bạn</>
+              ) : screen === 'home' ? (
                 <>
                   {dateLine} · tổng cộng {fmtD(total)}
                 </>
@@ -304,13 +354,21 @@ function Main({
               )}
             </p>
           </div>
+          <button className="icon-btn avatar-btn" onClick={() => setScreen('profile')} aria-label="Hồ sơ của bạn" aria-current={screen === 'profile' ? 'page' : undefined}>
+            <Avatar profile={profile} size={36} />
+          </button>
+          <button className="icon-btn theme-btn" onClick={onToggleTheme} aria-label={theme === 'dark' ? 'Chuyển sang giao diện sáng' : 'Chuyển sang giao diện tối'}>
+            {theme === 'dark' ? <IconSun /> : <IconMoon />}
+          </button>
           <button className="icon-btn top-gear" onClick={() => setSheet({ k: 'settings' })} aria-label="Cài đặt">
             <IconGear />
           </button>
         </header>
 
-        {screen === 'home' ? (
-          <div className={`home ${needsRefill ? 'has-banner' : ''}`}>
+        {screen === 'profile' ? (
+          <ProfileScreen profile={profile} onSaved={onProfile} />
+        ) : screen === 'home' ? (
+          <div className="home">
             {needsRefill && (
               <section className="month" aria-label="Tháng mới">
                 <div>
@@ -322,6 +380,24 @@ function Main({
                 </button>
               </section>
             )}
+            <div className="jars">
+              <section aria-labelledby="h-spend">
+                <h2 id="h-spend" className="sec">Hũ chi tiêu</h2>
+                <div className="jar-grid">
+                  {spendJars.map((j) => jarCard(j.id))}
+                  {spendJars.length === 0 && newJarTile}
+                </div>
+              </section>
+              <section aria-labelledby="h-save">
+                <h2 id="h-save" className="sec">Hũ tích lũy</h2>
+                <div className="jar-grid">
+                  {saveJars.map((j) => jarCard(j.id))}
+                  {newJarTile}
+                </div>
+              </section>
+            </div>
+
+            <div className="side">
             <section className={`xu ${mood}`} aria-label="Xu nhắn bạn">
               <Mascot mood={mood} />
               <div className="xu-say">
@@ -372,22 +448,7 @@ function Main({
               )}
             </section>
 
-            <div className="jars">
-              <section aria-labelledby="h-spend">
-                <h2 id="h-spend" className="sec">Hũ chi tiêu</h2>
-                <div className="jar-grid">
-                  {spendJars.map((j) => jarCard(j.id))}
-                  {spendJars.length === 0 && newJarTile}
-                </div>
-              </section>
-              <section aria-labelledby="h-save">
-                <h2 id="h-save" className="sec">Hũ tích lũy</h2>
-                <div className="jar-grid">
-                  {saveJars.map((j) => jarCard(j.id))}
-                  {newJarTile}
-                </div>
-              </section>
-            </div>
+            {pulse.hasActivity && <PulseCard pulse={pulse} onOpen={() => setSheet({ k: 'pulse' })} />}
 
             <section className="recent" aria-labelledby="h-recent">
               <div className="sec-row">
@@ -397,11 +458,12 @@ function Main({
                 </button>
               </div>
               {txs.length ? (
-                <ul className="txs">{txs.slice(0, 4).map((t) => <TxRow key={t.id} tx={t} jars={state.jars} />)}</ul>
+                <ul className="txs">{txs.slice(0, 4).map((t) => <TxRow key={t.id} tx={t} jars={state.jars} onOpen={openTx} />)}</ul>
               ) : (
                 <p className="empty">Chưa có giao dịch. Bấm Ghi nhanh để thêm khoản đầu tiên.</p>
               )}
             </section>
+            </div>
           </div>
         ) : (
           <div className="history">
@@ -423,7 +485,7 @@ function Main({
               groups.map((g) => (
                 <section key={g.label} className="day">
                   <h2 className="sec">{g.label}</h2>
-                  <ul className="txs">{g.items.map((t) => <TxRow key={t.id} tx={t} jars={state.jars} />)}</ul>
+                  <ul className="txs">{g.items.map((t) => <TxRow key={t.id} tx={t} jars={state.jars} onOpen={openTx} />)}</ul>
                 </section>
               ))
             ) : (
@@ -468,6 +530,7 @@ function Main({
           onTransfer={() => setSheet({ k: 'transfer', from: detailJar.id })}
           onSpend={() => setSheet({ k: 'quick', jar: detailJar.id })}
           onEdit={() => setSheet({ k: 'edit', id: detailJar.id })}
+          onOpenTx={openTx}
         />
       )}
       {sheet?.k === 'edit' && (
@@ -490,6 +553,8 @@ function Main({
           }}
         />
       )}
+      {sheet?.k === 'tx' && editTx && <TxSheet key={editTx.id} store={store} tx={editTx} onSave={saveTx} onDelete={removeTxs} onClose={() => setSheet(null)} />}
+      {sheet?.k === 'pulse' && <PulseSheet pulse={pulse} onClose={() => setSheet(null)} />}
       {sheet?.k === 'split' && (
         <SplitSheet
           store={store}
@@ -526,6 +591,8 @@ function Main({
               : 'Chưa đặt. Đặt tỷ lệ để lương tự chia vào các hũ.'
           }
           onSplit={() => setSheet({ k: 'split' })}
+          themePref={themePref}
+          onTheme={onTheme}
           username={user}
           status={sync.status}
           onLogout={logout}
@@ -548,34 +615,38 @@ function Main({
 type Auth =
   | { s: 'loading' }
   | { s: 'out'; notice?: string }
-  | { s: 'in'; user: string; state: State; rev: number };
+  | { s: 'code'; profile: Profile; code: string; reason: 'new' | 'reset' }
+  | { s: 'in'; profile: Profile; state: State; rev: number };
 
 const LAST_USER = 'sym.lastUser';
 
 /** Gate: sign in or register, load that user's data, then show the app. */
 export function App() {
   const [auth, setAuth] = useState<Auth>({ s: 'loading' });
+  const themeCtl = useTheme();
 
-  const enter = useCallback(async (user: string) => {
+  const enter = useCallback(async (profile: Profile) => {
     const remote = await api.getData();
     try {
-      localStorage.setItem(LAST_USER, user);
+      localStorage.setItem(LAST_USER, profile.username);
     } catch {
       /* blocked */
     }
-    setAuth({ s: 'in', user, state: parseState(remote.state) ?? seed(), rev: remote.rev });
+    writeProfileCache(profile);
+    setAuth({ s: 'in', profile, state: parseState(remote.state) ?? seed(), rev: remote.rev });
   }, []);
 
   useEffect(() => {
     (async () => {
       try {
-        await enter((await api.me()).username);
+        await enter(await api.me());
       } catch (e) {
         if (e instanceof ApiError && e.status === 0) {
           // no connection: open the copy cached on this device, if there is one
           const last = localStorage.getItem(LAST_USER);
           const cached = last ? readCache(last) : null;
-          if (last && cached) return setAuth({ s: 'in', user: last, state: cached.state, rev: cached.rev });
+          const profile = last ? readProfileCache(last) : null;
+          if (last && cached && profile) return setAuth({ s: 'in', profile, state: cached.state, rev: cached.rev });
           return setAuth({ s: 'out', notice: 'Không kết nối được máy chủ.' });
         }
         setAuth({ s: 'out' });
@@ -583,37 +654,85 @@ export function App() {
     })();
   }, [enter]);
 
+  const leave = (user: string) => {
+    api.logout().catch(() => {});
+    clearCache(user); // the data lives on the server; do not leave it on a shared device
+    try {
+      localStorage.removeItem(LAST_USER);
+    } catch {
+      /* blocked */
+    }
+    setAuth({ s: 'out' });
+  };
+
   if (auth.s === 'loading') return <div className="boot" aria-busy="true" aria-label="Đang tải" />;
 
   if (auth.s === 'out') {
     return (
       <AuthScreen
         notice={auth.notice}
-        onSubmit={async (mode, username, password) => {
-          const r = mode === 'login' ? await api.login(username, password) : await api.register(username, password);
-          await enter(r.username);
+        onSubmit={async (mode, form) => {
+          if (mode === 'login') return enter(await api.login(form.username, form.password));
+          const { recoveryCode, ...profile } = await api.register(form);
+          // the recovery code is shown once, before the app opens
+          if (recoveryCode) setAuth({ s: 'code', profile: { ...profile, hasRecovery: true }, code: recoveryCode, reason: 'new' });
+          else await enter(profile);
+        }}
+        onReset={async (identifier, code, password) => {
+          const { recoveryCode, ...profile } = await api.reset(identifier, code, password);
+          if (recoveryCode) setAuth({ s: 'code', profile: { ...profile, hasRecovery: true }, code: recoveryCode, reason: 'reset' });
+          else await enter(profile);
         }}
       />
     );
   }
 
-  const user = auth.user;
+  if (auth.s === 'code') {
+    return (
+      <RecoveryScreen
+        code={auth.code}
+        username={auth.profile.username}
+        reason={auth.reason}
+        onDone={() => {
+          enter(auth.profile).catch(() => setAuth({ s: 'out', notice: 'Không kết nối được máy chủ.' }));
+        }}
+      />
+    );
+  }
+
+  const { profile } = auth;
+  const user = profile.username;
+
+  // an account made before profiles existed fills in email and phone once, then they are locked
+  if (!profile.email || !profile.phone) {
+    return (
+      <CompleteProfile
+        profile={profile}
+        onDone={(p) => {
+          writeProfileCache(p);
+          setAuth({ ...auth, profile: p });
+        }}
+        onLogout={() => leave(user)}
+      />
+    );
+  }
+
   return (
     <Main
       key={user}
       user={user}
+      profile={profile}
+      onProfile={(p) => {
+        writeProfileCache(p);
+        setAuth({ ...auth, profile: p });
+      }}
       initial={auth.state}
       initialRev={auth.rev}
-      onLogout={() => {
-        api.logout().catch(() => {});
-        clearCache(user); // the data lives on the server; do not leave it on a shared device
-        try {
-          localStorage.removeItem(LAST_USER);
-        } catch {
-          /* blocked */
-        }
-        setAuth({ s: 'out' });
-      }}
+      themePref={themeCtl.pref}
+      theme={themeCtl.theme}
+      onTheme={themeCtl.setPref}
+      onToggleTheme={themeCtl.toggle}
+      onLogout={() => leave(user)}
       onUnauthorized={() => setAuth({ s: 'out', notice: 'Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.' })}
     />
   );

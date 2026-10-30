@@ -52,6 +52,19 @@ export const IconEdit = I(
     <path d="M13.5 6.5l4 4" />
   </>,
 );
+export const IconSun = I(
+  <>
+    <circle cx="12" cy="12" r="4" />
+    <path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6l1.4 1.4M17 17l1.4 1.4M18.4 5.6L17 7M7 17l-1.4 1.4" />
+  </>,
+);
+export const IconMoon = I(<path d="M20 14.5A8 8 0 0 1 9.5 4 8 8 0 1 0 20 14.5z" />);
+export const IconUser = I(
+  <>
+    <circle cx="12" cy="8" r="4" />
+    <path d="M4 20c1-4 4-6 8-6s7 2 8 6" />
+  </>,
+);
 export const IconCheck = I(<path d="M5 12.5l4.5 4.5L19 7.5" strokeWidth="2.2" />);
 export const IconArrow = I(<path d="M5 12h14M13 6l6 6-6 6" />);
 
