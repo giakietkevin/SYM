@@ -1,0 +1,9 @@
+{
+  "name": "SYM – Save your money",
+  "short_name": "SYM",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f2f4f1",
+  "theme_color": "#f2f4f1",
+  "icons": [{ "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml" }]
+}
