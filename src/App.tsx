@@ -9,6 +9,8 @@ import { SettingsSheet } from './components/SettingsSheet';
 import { TransferSheet } from './components/TransferSheet';
 import { MonthSheet } from './components/MonthSheet';
 import { SplitSheet } from './components/SplitSheet';
+import { RecurringSheet } from './components/RecurringSheet';
+import { dateKey, dueTxs } from './lib/recurring';
 import { PulseCard, PulseSheet } from './components/Pulse';
 import { computePulse } from './lib/pulse';
 import { TxSheet } from './components/TxSheet';
@@ -41,6 +43,7 @@ type Sheet =
   | { k: 'month' }
   | { k: 'tx'; id: string }
   | { k: 'pulse' }
+  | { k: 'recurring' }
   | null;
 
 type Screen = 'home' | 'history' | 'profile';
@@ -93,6 +96,36 @@ function Main({
   useEffect(() => {
     if (state.rolled === undefined) dispatch({ t: 'setRolled', month: monthKey() });
   }, [state.rolled, dispatch]);
+
+  // Monthly lines that have come due are written once, by id, so a second device or a reload never doubles them.
+  // The date is state so a tab left open overnight still catches up when it is looked at again.
+  const [today, setToday] = useState(() => dateKey(new Date()));
+  useEffect(() => {
+    const check = () => setToday(dateKey(new Date()));
+    document.addEventListener('visibilitychange', check);
+    window.addEventListener('focus', check);
+    return () => {
+      document.removeEventListener('visibilitychange', check);
+      window.removeEventListener('focus', check);
+    };
+  }, []);
+  const warned = useRef('');
+  useEffect(() => {
+    const due = dueTxs(state.recurring, state.txs, state.jars, state.rule, new Date());
+    if (due.txs.length) {
+      dispatch({ t: 'addTxs', txs: due.txs });
+      const n = due.txs.filter((t) => t.type !== 'transfer' || !t.batch).length;
+      chime();
+      say(`Đã tự ghi ${n} giao dịch định kỳ`);
+    }
+    if (due.waiting.length) {
+      const key = due.waiting.map((w) => `${w.name}${w.date}`).join('|');
+      if (key !== warned.current) {
+        warned.current = key;
+        if (!due.txs.length) say(`Chưa ghi được "${due.waiting[0].name}"${due.waiting.length > 1 ? ` và ${due.waiting.length - 1} khoản nữa` : ''}: không đủ tiền. Thêm tiền, SYM sẽ ghi bù.`);
+      }
+    }
+  }, [state.recurring, state.txs, state.jars, state.rule, today, dispatch, say]);
 
   const sync = useSync({
     user,
@@ -555,6 +588,23 @@ function Main({
       )}
       {sheet?.k === 'tx' && editTx && <TxSheet key={editTx.id} store={store} tx={editTx} onSave={saveTx} onDelete={removeTxs} onClose={() => setSheet(null)} />}
       {sheet?.k === 'pulse' && <PulseSheet pulse={pulse} onClose={() => setSheet(null)} />}
+      {sheet?.k === 'recurring' && (
+        <RecurringSheet
+          store={store}
+          onSave={(item) => {
+            dispatch({ t: 'saveRecurring', item });
+            soft();
+            haptic('success');
+            say(`Đã lưu khoản định kỳ ${item.note}`);
+          }}
+          onRemove={(id) => {
+            dispatch({ t: 'removeRecurring', id });
+            haptic('warn');
+            say('Đã xóa khoản định kỳ');
+          }}
+          onClose={() => setSheet(null)}
+        />
+      )}
       {sheet?.k === 'split' && (
         <SplitSheet
           store={store}
@@ -591,6 +641,11 @@ function Main({
               : 'Chưa đặt. Đặt tỷ lệ để lương tự chia vào các hũ.'
           }
           onSplit={() => setSheet({ k: 'split' })}
+          recurringSummary={(() => {
+            const n = (state.recurring ?? []).filter((r) => !r.deleted).length;
+            return n ? `${n} khoản tự ghi mỗi tháng.` : 'Tiền trọ, Netflix, lương… tự ghi mỗi tháng.';
+          })()}
+          onRecurring={() => setSheet({ k: 'recurring' })}
           themePref={themePref}
           onTheme={onTheme}
           username={user}

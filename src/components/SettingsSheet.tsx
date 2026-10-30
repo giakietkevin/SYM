@@ -15,6 +15,8 @@ export function SettingsSheet({
   onLogout,
   ruleSummary,
   onSplit,
+  recurringSummary,
+  onRecurring,
   themePref,
   onTheme,
   sound,
@@ -29,6 +31,8 @@ export function SettingsSheet({
   onLogout: () => void;
   ruleSummary: string;
   onSplit: () => void;
+  recurringSummary: string;
+  onRecurring: () => void;
   themePref: ThemePref;
   onTheme: (p: ThemePref) => void;
   sound: boolean;
@@ -58,6 +62,15 @@ export function SettingsSheet({
           <p className="hint">{ruleSummary}</p>
         </div>
         <button className="btn" onClick={onSplit}>
+          Mở
+        </button>
+      </div>
+      <div className="setting">
+        <div>
+          <b>Giao dịch định kỳ</b>
+          <p className="hint">{recurringSummary}</p>
+        </div>
+        <button className="btn" onClick={onRecurring}>
           Mở
         </button>
       </div>

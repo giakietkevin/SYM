@@ -1885,3 +1885,7 @@ button {
   word-break: break-all;
   user-select: all;
 }
+
+.rec-list {
+  margin: 0;
+}
