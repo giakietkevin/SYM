@@ -12,6 +12,8 @@ export function SettingsSheet({
   username,
   status,
   onLogout,
+  ruleSummary,
+  onSplit,
   sound,
   haptics,
   onSound,
@@ -22,6 +24,8 @@ export function SettingsSheet({
   username: string;
   status: SyncStatus;
   onLogout: () => void;
+  ruleSummary: string;
+  onSplit: () => void;
   sound: boolean;
   haptics: boolean;
   onSound: (v: boolean) => void;
@@ -41,6 +45,15 @@ export function SettingsSheet({
         </div>
         <button className="btn" onClick={onLogout}>
           Đăng xuất
+        </button>
+      </div>
+      <div className="setting">
+        <div>
+          <b>Quy tắc chia tiền</b>
+          <p className="hint">{ruleSummary}</p>
+        </div>
+        <button className="btn" onClick={onSplit}>
+          Mở
         </button>
       </div>
       <div className="setting">

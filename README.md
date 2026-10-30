@@ -29,10 +29,12 @@ Put it behind HTTPS in production and set `SYM_SECURE=1` (or send `X-Forwarded-P
 - **Transfers**: drag the wallet card or any jar onto another jar (long-press on touch), or use Chuyển in the jar sheet. Optional note.
 - **Mascot Xu**: smiles while every jar is fine, sweats when a jar passes 85% of its limit.
 - **Feedback**: haptics (`navigator.vibrate`: Android and installed PWAs, not iOS Safari) and a synthesized "chinh!" sound, both switchable.
+- **Auto-split**: set a rule once (percent per jar, presets 50/30/20 and equal, whatever is unassigned stays in the wallet). Income can be split on entry with one checkbox, or the wallet can be split on demand. One undo reverses the income and every split line.
+- **New month**: when the month changes, a banner offers to refill the spending jars: *Nạp đủ* (back to the monthly limit, surplus returns to the wallet), *Cộng thêm* (keep the leftover and add one more limit) or *Bỏ qua*, chosen per jar. If the wallet cannot cover it, jars are refilled in order and the shortfall is shown.
 - **History**: grouped by day with filters.
 
 ## Data model
 No balance is stored. Balances are derived from the ledger (`src/lib/types.ts`, `src/lib/store.ts`): each line moves money from/to the wallet or a jar, so the numbers cannot drift apart.
 
 ## Not yet built (PRD phases 2 and 3)
-Auto-split rules (50/30/20), bubble chart, Weekly Pulse, biometrics, OCR, shared jars, password change/recovery. To ship as a native app, wrap with Capacitor to get true haptics.
+Bubble chart, Weekly Pulse, editing or deleting old transactions, recurring items, biometrics, OCR, shared jars, password change/recovery. To ship as a native app, wrap with Capacitor to get true haptics.

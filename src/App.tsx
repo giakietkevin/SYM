@@ -7,6 +7,8 @@ import { Mascot } from './components/Mascot';
 import { QuickAdd, type NewTx } from './components/QuickAdd';
 import { SettingsSheet } from './components/SettingsSheet';
 import { TransferSheet } from './components/TransferSheet';
+import { MonthSheet } from './components/MonthSheet';
+import { SplitSheet } from './components/SplitSheet';
 import { TxRow, dayLabel, locName } from './components/TxRow';
 import { Money } from './components/ui';
 import { chime, haptic, pop, setFeedbackFlags, soft } from './lib/feedback';
@@ -16,9 +18,11 @@ import { jarStatus } from './lib/jar';
 import { api, ApiError } from './lib/api';
 import { parseState, uid, useStore } from './lib/store';
 import { seed } from './lib/seed';
+import { monthKey, type RefillStep } from './lib/rollover';
+import { planSplit, ruleTotal } from './lib/split';
 import { clearCache, readCache, useSync } from './lib/sync';
 import { AuthScreen } from './components/AuthScreen';
-import type { Loc, State } from './lib/types';
+import type { Loc, Rule, State, Tx } from './lib/types';
 
 type Sheet =
   | { k: 'quick'; jar?: string }
@@ -26,6 +30,8 @@ type Sheet =
   | { k: 'edit'; id?: string }
   | { k: 'transfer'; from?: Loc; to?: Loc }
   | { k: 'settings' }
+  | { k: 'split' }
+  | { k: 'month' }
   | null;
 
 type Screen = 'home' | 'history';
@@ -49,19 +55,23 @@ function Main({
 
   const [screen, setScreen] = useState<Screen>('home');
   const [sheet, setSheet] = useState<Sheet>(null);
-  const [toast, setToast] = useState<{ text: string; undo?: string } | null>(null);
-  const [fx, setFx] = useState<Fx | null>(null);
+  const [toast, setToast] = useState<{ text: string; undo?: () => void } | null>(null);
+  const [fx, setFx] = useState<Fx[]>([]);
   const [filter, setFilter] = useState<Filter>('all');
   const toastTimer = useRef(0);
   const fxN = useRef(0);
 
   useEffect(() => setFeedbackFlags(state.sound, state.haptics), [state.sound, state.haptics]);
 
-  const say = useCallback((text: string, undo?: string) => {
+  const say = useCallback((text: string, undo?: () => void) => {
     setToast({ text, undo });
     window.clearTimeout(toastTimer.current);
     toastTimer.current = window.setTimeout(() => setToast(null), 5000);
   }, []);
+
+  useEffect(() => {
+    if (state.rolled === undefined) dispatch({ t: 'setRolled', month: monthKey() });
+  }, [state.rolled, dispatch]);
 
   const sync = useSync({
     user,
@@ -79,11 +89,46 @@ function Main({
     onLogout();
   };
 
+  /** Money landing in jars: coin + float on each card. */
+  const showFx = useCallback((list: { id: string; kind: 'in' | 'out'; amount: number }[]) => {
+    setFx(list.map((f) => ({ ...f, n: ++fxN.current })));
+    window.setTimeout(() => setFx([]), 1600);
+  }, []);
+
+  /** Several ledger lines that belong together (undo removes them all). */
+  const addBatch = useCallback(
+    (lines: Omit<Tx, 'id' | 'ts' | 'batch'>[], batch: string) => {
+      const ts = Date.now();
+      lines.forEach((l, i) => dispatch({ t: 'addTx', tx: { ...l, id: i === 0 ? batch : uid(), ts: ts + i, batch } }));
+    },
+    [dispatch],
+  );
+
   const commit = useCallback(
-    (t: NewTx) => {
+    (t: NewTx, opts?: { split?: boolean }) => {
+      const name = (l?: Loc) => locName(l, state.jars);
+
+      // income + automatic split: one batch, one undo
+      if (t.type === 'income' && opts?.split && t.to === 'wallet') {
+        const lines = planSplit(t.amount, state.rule, jars);
+        if (lines.length) {
+          const batch = uid();
+          addBatch(
+            [t, ...lines.map((l) => ({ type: 'transfer' as const, amount: l.amount, from: 'wallet', to: l.jar.id, note: 'Chia theo quy tắc' }))],
+            batch,
+          );
+          chime();
+          haptic('drop');
+          showFx(lines.map((l) => ({ id: l.jar.id, kind: 'in' as const, amount: l.amount })));
+          setSheet(null);
+          const sent = lines.reduce((s, l) => s + l.amount, 0);
+          say(`Đã thêm ${fmtD(t.amount)} và chia ${fmtD(sent)} vào ${lines.length} hũ`, () => dispatch({ t: 'undoTx', id: batch }));
+          return;
+        }
+      }
+
       const tx = { ...t, id: uid(), ts: Date.now() };
       dispatch({ t: 'addTx', tx });
-      const name = (l?: Loc) => locName(l, state.jars);
       let text: string;
 
       if (tx.type === 'expense') {
@@ -94,7 +139,7 @@ function Main({
         const low = jar ? jarStatus(jar, left, true).low : false;
         if (low) window.setTimeout(() => haptic('warn'), 220);
         text = `Đã trừ ${fmtD(tx.amount)} khỏi hũ ${name(tx.from)}${low ? '. Hũ sắp cạn, đi chậm lại nhé' : ''}`;
-        setFx({ id: tx.from!, kind: 'out', amount: tx.amount, n: ++fxN.current });
+        showFx([{ id: tx.from!, kind: 'out', amount: tx.amount }]);
       } else {
         chime();
         haptic('drop');
@@ -102,14 +147,51 @@ function Main({
           tx.type === 'income'
             ? `Đã thêm ${fmtD(tx.amount)} vào ${name(tx.to)}`
             : `Đã chuyển ${fmtD(tx.amount)} từ ${name(tx.from)} sang ${name(tx.to)}`;
-        if (tx.to && tx.to !== 'wallet') setFx({ id: tx.to, kind: 'in', amount: tx.amount, n: ++fxN.current });
+        if (tx.to && tx.to !== 'wallet') showFx([{ id: tx.to, kind: 'in', amount: tx.amount }]);
       }
-      window.setTimeout(() => setFx(null), 1600);
       setSheet(null);
-      say(text, tx.id);
+      say(text, () => dispatch({ t: 'undoTx', id: tx.id }));
     },
-    [bal, dispatch, jars, say, state.jars],
+    [addBatch, bal, dispatch, jars, say, showFx, state.jars, state.rule],
   );
+
+  /** Split money already in the wallet by the rule, and keep the rule. */
+  const applySplit = (rule: Rule, amount: number) => {
+    dispatch({ t: 'setRule', rule });
+    const lines = planSplit(amount, rule, jars);
+    if (!lines.length) return;
+    const batch = uid();
+    addBatch(lines.map((l) => ({ type: 'transfer' as const, amount: l.amount, from: 'wallet', to: l.jar.id, note: 'Chia theo quy tắc' })), batch);
+    chime();
+    haptic('drop');
+    showFx(lines.map((l) => ({ id: l.jar.id, kind: 'in' as const, amount: l.amount })));
+    setSheet(null);
+    say(`Đã chia ${fmtD(lines.reduce((s, l) => s + l.amount, 0))} vào ${lines.length} hũ`, () => dispatch({ t: 'undoTx', id: batch }));
+  };
+
+  /** New month: move money between the wallet and each spending jar, then remember the month. */
+  const applyRefill = (steps: RefillStep[]) => {
+    const prev = state.rolled;
+    const lines = steps
+      .filter((s) => s.move !== 0)
+      .map((s) =>
+        s.move > 0
+          ? { type: 'transfer' as const, amount: s.move, from: 'wallet', to: s.jar.id, note: `Tháng ${new Date().getMonth() + 1}: nạp lại hạn mức` }
+          : { type: 'transfer' as const, amount: -s.move, from: s.jar.id, to: 'wallet', note: `Tháng ${new Date().getMonth() + 1}: tiền thừa về ví` },
+      );
+    dispatch({ t: 'setRolled', month: monthKey() });
+    setSheet(null);
+    if (!lines.length) return say('Đã giữ nguyên các hũ cho tháng mới');
+    const batch = uid();
+    addBatch(lines, batch);
+    chime();
+    haptic('success');
+    showFx(steps.filter((s) => s.move > 0).map((s) => ({ id: s.jar.id, kind: 'in' as const, amount: s.move })));
+    say(`Đã nạp lại ${steps.filter((s) => s.move > 0).length} hũ cho tháng mới`, () => {
+      dispatch({ t: 'undoTx', id: batch });
+      dispatch({ t: 'setRolled', month: prev });
+    });
+  };
 
   const { drag, press, guard } = useDrag(
     useCallback((from: Loc, to: Loc) => setSheet({ k: 'transfer', from, to }), []),
@@ -129,6 +211,8 @@ function Main({
   }, [spendJars, bal, store.funded]);
 
   const mood = worst ? 'nervous' : 'happy';
+  const needsRefill = !!state.rolled && state.rolled < monthKey() && spendJars.length > 0;
+  const ruleSum = ruleTotal(state.rule, jars);
   const total = wallet + jars.reduce((s, j) => s + (bal[j.id] ?? 0), 0);
 
   const now = new Date();
@@ -149,7 +233,7 @@ function Main({
         balance={bal[j.id] ?? 0}
         funded={store.funded[j.id]}
         over={drag?.over === j.id}
-        fx={fx}
+        fx={fx.find((f) => f.id === j.id) ?? null}
         onOpen={openJar(j.id)}
         onPress={(e) => press(e, j.id, j.name)}
       />
@@ -226,7 +310,18 @@ function Main({
         </header>
 
         {screen === 'home' ? (
-          <div className="home">
+          <div className={`home ${needsRefill ? 'has-banner' : ''}`}>
+            {needsRefill && (
+              <section className="month" aria-label="Tháng mới">
+                <div>
+                  <b>Tháng {now.getMonth() + 1} đã bắt đầu</b>
+                  <p>Nạp lại hạn mức cho các hũ chi tiêu để bắt đầu tháng mới.</p>
+                </div>
+                <button className="btn primary" onClick={() => setSheet({ k: 'month' })}>
+                  Nạp lại hũ
+                </button>
+              </section>
+            )}
             <section className={`xu ${mood}`} aria-label="Xu nhắn bạn">
               <Mascot mood={mood} />
               <div className="xu-say">
@@ -249,13 +344,15 @@ function Main({
               className={`wallet ${drag?.over === 'wallet' ? 'is-over' : ''}`}
               data-drop="wallet"
               onPointerDown={(e) => press(e, 'wallet', 'Ví tổng')}
-              onClick={guard(() => setSheet({ k: 'transfer', from: 'wallet' }))}
-              role="button"
-              tabIndex={0}
-              onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && setSheet({ k: 'transfer', from: 'wallet' })}
-              aria-label={`Ví tổng, ${fmtD(wallet)} chưa chia vào hũ nào`}
             >
-              <div>
+              <div
+                className="wallet-main"
+                onClick={guard(() => setSheet({ k: 'transfer', from: 'wallet' }))}
+                role="button"
+                tabIndex={0}
+                onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && setSheet({ k: 'transfer', from: 'wallet' })}
+                aria-label={`Ví tổng, ${fmtD(wallet)} chưa chia vào hũ nào`}
+              >
                 <h2>Ví tổng</h2>
                 <Money value={wallet} className="wallet-fig" />
                 <p className="wallet-sub">{wallet > 0
@@ -264,6 +361,15 @@ function Main({
                       ? 'Đã chia hết vào các hũ.'
                       : 'Chưa có tiền. Bấm Ghi nhanh, chọn Thu nhập để thêm.'}</p>
               </div>
+              {jars.length > 0 && (
+                <button
+                  className="btn"
+                  onPointerDown={(e) => e.stopPropagation()}
+                  onClick={() => setSheet({ k: 'split' })}
+                >
+                  {ruleSum > 0 ? 'Chia tiền' : 'Đặt quy tắc chia'}
+                </button>
+              )}
             </section>
 
             <div className="jars">
@@ -340,7 +446,7 @@ function Main({
           {toast.undo && (
             <button
               onClick={() => {
-                dispatch({ t: 'undoTx', id: toast.undo! });
+                toast.undo?.();
                 haptic('tap');
                 setToast(null);
               }}
@@ -384,8 +490,42 @@ function Main({
           }}
         />
       )}
+      {sheet?.k === 'split' && (
+        <SplitSheet
+          store={store}
+          onApply={applySplit}
+          onSaveRule={(rule) => {
+            dispatch({ t: 'setRule', rule });
+            setSheet(null);
+            say('Đã lưu quy tắc chia tiền');
+          }}
+          onClose={() => setSheet(null)}
+        />
+      )}
+      {sheet?.k === 'month' && (
+        <MonthSheet
+          store={store}
+          month={now.getMonth() + 1}
+          onApply={applyRefill}
+          onSkip={() => {
+            dispatch({ t: 'setRolled', month: monthKey() });
+            setSheet(null);
+            say('Đã bỏ qua tháng này');
+          }}
+          onClose={() => setSheet(null)}
+        />
+      )}
       {sheet?.k === 'settings' && (
         <SettingsSheet
+          ruleSummary={
+            ruleSum > 0
+              ? jars
+                  .filter((j) => (state.rule?.[j.id] ?? 0) > 0)
+                  .map((j) => `${j.name} ${state.rule![j.id]}%`)
+                  .join(', ')
+              : 'Chưa đặt. Đặt tỷ lệ để lương tự chia vào các hũ.'
+          }
+          onSplit={() => setSheet({ k: 'split' })}
           username={user}
           status={sync.status}
           onLogout={logout}

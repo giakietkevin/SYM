@@ -34,13 +34,21 @@ export interface Tx {
   from?: Loc;
   to?: Loc;
   note: string;
+  /** lines created together (an income and its split, a month refill) share one id so they undo together */
+  batch?: string;
 }
+
+/** Percent of an income sent to each jar; whatever is not assigned stays in the wallet. */
+export type Rule = Record<string, number>;
 
 export interface State {
   jars: Jar[];
   txs: Tx[];
   sound: boolean;
   haptics: boolean;
+  rule?: Rule;
+  /** last month (YYYY-MM) whose spending jars were refilled or skipped */
+  rolled?: string;
 }
 
 export const HUES: Record<Hue, { name: string; bg: string; ink: string; mid: string; pale: string }> = {

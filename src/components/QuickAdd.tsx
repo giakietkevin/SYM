@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { evalExpr, fmtD, short } from '../lib/money';
+import { ruleTotal } from '../lib/split';
 import type { Store } from '../lib/store';
 import { HUES, type Jar, type Tx } from '../lib/types';
 import { AmountPad } from './AmountPad';
@@ -59,7 +60,7 @@ export function QuickAdd({
 }: {
   store: Store;
   preJar?: string;
-  onSubmit: (t: NewTx) => void;
+  onSubmit: (t: NewTx, opts?: { split?: boolean }) => void;
   onClose: () => void;
 }) {
   const spendJars = useMemo(() => store.jars.filter((j) => j.kind === 'spend'), [store.jars]);
@@ -71,6 +72,9 @@ export function QuickAdd({
   const [jarId, setJarId] = useState<string | undefined>(preJar ?? chips[0]?.jar.id ?? spendJars[0]?.id);
   const [dest, setDest] = useState<string>('wallet');
   const [note, setNote] = useState('');
+  const [split, setSplit] = useState(true);
+  const ruleSum = ruleTotal(store.state.rule, store.jars);
+  const canSplit = type === 'income' && dest === 'wallet' && ruleSum > 0;
 
   const amount = evalExpr(expr) ?? 0;
   const jar = store.jars.find((j) => j.id === jarId);
@@ -80,7 +84,7 @@ export function QuickAdd({
 
   const submit = () => {
     if (!canSave) return;
-    onSubmit(type === 'expense' ? { type, amount, from: jarId, note: note.trim() } : { type, amount, to: dest, note: note.trim() });
+    onSubmit(type === 'expense' ? { type, amount, from: jarId, note: note.trim() } : { type, amount, to: dest, note: note.trim() }, { split: canSplit && split });
   };
 
   return (
@@ -147,6 +151,21 @@ export function QuickAdd({
         <span className="label">Ghi chú</span>
         <input className="input" value={note} onChange={(e) => setNote(e.target.value)} placeholder={type === 'expense' ? 'Ví dụ: phở bò' : 'Ví dụ: lương, tiền thưởng'} maxLength={60} />
       </label>
+
+      {canSplit && (
+        <label className="check">
+          <input type="checkbox" checked={split} onChange={(e) => setSplit(e.target.checked)} />
+          <span>
+            Chia luôn theo quy tắc
+            <small>
+              {ruleSum}% vào các hũ, {100 - ruleSum}% ở lại Ví tổng
+            </small>
+          </span>
+        </label>
+      )}
+      {type === 'income' && dest === 'wallet' && ruleSum === 0 && store.jars.length > 0 && (
+        <p className="hint">Mẹo: đặt quy tắc chia tiền trong Cài đặt để lương tự chia vào các hũ.</p>
+      )}
 
       <div className="sticky-cta">
         <button className="btn primary block" disabled={!canSave} onClick={submit}>

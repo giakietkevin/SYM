@@ -1,10 +1,12 @@
 import { useMemo, useReducer } from 'react';
 import { seed } from './seed';
-import type { Jar, Loc, State, Tx } from './types';
+import type { Jar, Loc, Rule, State, Tx } from './types';
 
 type Action =
   | { t: 'addTx'; tx: Tx }
   | { t: 'undoTx'; id: string }
+  | { t: 'setRule'; rule: Rule }
+  | { t: 'setRolled'; month: string | undefined }
   | { t: 'saveJar'; jar: Jar }
   | { t: 'deleteJar'; id: string }
   | { t: 'flags'; sound?: boolean; haptics?: boolean }
@@ -27,7 +29,11 @@ function reducer(s: State, a: Action): State {
     case 'addTx':
       return { ...s, txs: [...s.txs, a.tx] };
     case 'undoTx':
-      return { ...s, txs: s.txs.filter((x) => x.id !== a.id) };
+      return { ...s, txs: s.txs.filter((x) => x.id !== a.id && x.batch !== a.id) };
+    case 'setRule':
+      return { ...s, rule: a.rule };
+    case 'setRolled':
+      return { ...s, rolled: a.month };
     case 'saveJar': {
       const exists = s.jars.some((j) => j.id === a.jar.id);
       return { ...s, jars: exists ? s.jars.map((j) => (j.id === a.jar.id ? a.jar : j)) : [...s.jars, a.jar] };
@@ -56,7 +62,14 @@ function reducer(s: State, a: Action): State {
 export function parseState(x: unknown): State | null {
   const s = x as State | null;
   if (!s || !Array.isArray(s.jars) || !Array.isArray(s.txs)) return null;
-  return { jars: s.jars, txs: s.txs, sound: s.sound !== false, haptics: s.haptics !== false };
+  return {
+    jars: s.jars,
+    txs: s.txs,
+    sound: s.sound !== false,
+    haptics: s.haptics !== false,
+    rule: s.rule && typeof s.rule === 'object' ? s.rule : undefined,
+    rolled: typeof s.rolled === 'string' ? s.rolled : undefined,
+  };
 }
 
 /**
@@ -69,7 +82,14 @@ export function mergeStates(local: State, remote: State): State {
   for (const t of local.txs) txs.set(t.id, t);
   const jars = new Map(remote.jars.map((j) => [j.id, j]));
   for (const j of local.jars) jars.set(j.id, { ...j, deleted: j.deleted || jars.get(j.id)?.deleted });
-  return { jars: [...jars.values()], txs: [...txs.values()], sound: local.sound, haptics: local.haptics };
+  return {
+    jars: [...jars.values()],
+    txs: [...txs.values()],
+    sound: local.sound,
+    haptics: local.haptics,
+    rule: local.rule ?? remote.rule,
+    rolled: [local.rolled, remote.rolled].filter(Boolean).sort().pop(), // YYYY-MM sorts as time
+  };
 }
 
 export function useStore(initial: State) {

@@ -6,5 +6,10 @@ import react from '@vitejs/plugin-react';
 // to refuse cross-site writes, and Vite's string shorthand would rewrite Host.
 export default defineConfig({
   plugins: [react()],
-  server: { host: true, proxy: { '/api': { target: 'http://127.0.0.1:8787', changeOrigin: false } } },
+  server: {
+    host: true,
+    proxy: { '/api': { target: 'http://127.0.0.1:8787', changeOrigin: false } },
+    // the SQLite file changes on every save; watching it would reload the page each time
+    watch: { ignored: ['**/server/data/**', '**/.taste-skill/**'] },
+  },
 });
