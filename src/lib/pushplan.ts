@@ -1,11 +1,11 @@
 import { dueIn, isOpen, remainingOf } from './debts';
-import { balanceOf } from './ledger';
+import { balanceOf, negativePlaces } from './ledger';
 import { short } from './money';
 import { dateKey, nextDate } from './recurring';
 import { streakInfo } from './streak';
 import type { Jar, NotifyPrefs, State } from './types';
 
-export const defaultNotify: NotifyPrefs = { log: true, hour: 20, bills: true, debts: true };
+export const defaultNotify: NotifyPrefs = { log: true, hour: 20, bills: true, debts: true, negative: true };
 
 export const notifyOf = (s: Pick<State, 'notify'>): NotifyPrefs => ({ ...defaultNotify, ...(s.notify ?? {}) });
 
@@ -20,6 +20,8 @@ export interface PushItem {
   title: string;
   body: string;
   ifNoLogSince?: number;
+  /** send only if this place (the wallet or a jar id) is still below zero at send time */
+  ifNegative?: string;
 }
 
 const MORNING = 9;
@@ -97,6 +99,24 @@ export function pushPlan(state: State, jars: Jar[], now = new Date(), days = 7):
       ] as const) {
         const when = at(plusDays(due, offset), MORNING);
         if (when > t && when <= end) out.push({ id: `debt:${d.id}:${d.due}:${offset}`, at: when, title: label, body: `${what}${d.note ? ` (${d.note})` : ''}.` });
+      }
+    }
+  }
+
+  // every morning while a place stays below zero; the server checks the balance again before sending
+  if (prefs.negative !== false) {
+    for (const p of negativePlaces(state.txs, jars)) {
+      for (let i = 0; i < days; i++) {
+        const day = plusDays(now, i);
+        const when = at(day, MORNING);
+        if (when <= t) continue;
+        out.push({
+          id: `neg:${p.loc}:${dateKey(day)}`,
+          at: when,
+          title: 'Có khoản đang âm',
+          body: `${p.name} đang âm ${short(-p.balance)}. Chuyển tiền vào để bù nhé.`,
+          ifNegative: p.loc,
+        });
       }
     }
   }

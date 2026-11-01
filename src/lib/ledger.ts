@@ -47,6 +47,15 @@ function mergeRecurring(local: Recurring[] = [], remote: Recurring[] = []): Recu
   return all.size ? [...all.values()] : undefined;
 }
 
+/** The wallet and live jars whose balance is below zero, most negative first. */
+export function negativePlaces(txs: Tx[], jars: Jar[]): { loc: Loc; name: string; balance: number }[] {
+  const places = [{ loc: 'wallet' as Loc, name: 'Ví tổng' }, ...jars.filter((j) => !j.deleted).map((j) => ({ loc: j.id as Loc, name: `Hũ ${j.name}` }))];
+  return places
+    .map((p) => ({ ...p, balance: balanceOf(txs, p.loc) }))
+    .filter((p) => p.balance < 0)
+    .sort((a, b) => a.balance - b.balance);
+}
+
 export interface LedgerProblem {
   /** "Ví tổng" or the jar's name */
   name: string;

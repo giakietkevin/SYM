@@ -107,6 +107,8 @@ export interface NotifyPrefs {
   bills: boolean;
   /** the morning before, and of, a debt's due date */
   debts: boolean;
+  /** each morning while the wallet or a jar is below zero (missing on older accounts: on) */
+  negative?: boolean;
 }
 
 export interface State {

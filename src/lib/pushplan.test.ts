@@ -7,7 +7,8 @@ import type { Jar, State, Tx } from './types';
 const jars: Jar[] = [{ id: 'home', name: 'Nhà', kind: 'spend', hue: 'sage', theme: 'house', goal: 0, created: 0 }];
 const now = new Date(2026, 10, 10, 9, 30); // Tuesday 10 Nov 2026, 09:30
 const line = (d: Date, p: Partial<Tx> = {}): Tx => ({ id: `t${d.getTime()}`, ts: d.getTime(), type: 'expense', amount: 1, from: 'wallet', note: '', ...p });
-const base = (p: Partial<State> = {}): State => ({ jars, txs: [line(new Date(2026, 10, 9, 12))], sound: true, haptics: true, ...p });
+const funded: Tx = { id: 'seed', ts: new Date(2026, 0, 1, 12).getTime(), type: 'income', amount: 1_000_000_000, to: 'wallet', note: '' };
+const base = (p: Partial<State> = {}): State => ({ jars, sound: true, haptics: true, ...p, txs: [funded, ...(p.txs ?? [line(new Date(2026, 10, 9, 12))])] });
 const hm = (ms: number) => {
   const d = new Date(ms);
   return `${d.getDate()}/${d.getMonth() + 1} ${d.getHours()}:${String(d.getMinutes()).padStart(2, '0')}`;
@@ -30,7 +31,7 @@ describe('pushPlan', () => {
   });
 
   it('nothing to nudge about for an empty account', () => {
-    expect(pushPlan(base({ txs: [] }), jars, now)).toEqual([]);
+    expect(pushPlan({ jars, txs: [], sound: true, haptics: true }, jars, now)).toEqual([]);
   });
 
   it('the morning before each recurring line in the week, flagging a jar that cannot cover it', () => {
@@ -66,14 +67,23 @@ describe('pushPlan', () => {
 
   it('switched-off kinds are left out', () => {
     const s = base({
-      notify: { log: false, hour: 20, bills: false, debts: false },
+      notify: { log: false, hour: 20, bills: false, debts: false, negative: false },
+      txs: [line(new Date(2026, 10, 9, 12), { from: 'home' })],
       recurring: [{ id: 'r', type: 'income', amount: 1, to: 'wallet', note: 'x', day: 12, start: '2026-01-01' }],
     });
     expect(pushPlan(s, jars, now)).toEqual([]);
   });
 
+  it('every morning while the wallet or a jar is below zero, checked again by the server', () => {
+    const s = base({ notify: { log: false, hour: 20, bills: false, debts: false }, txs: [line(new Date(2026, 10, 9, 12), { from: 'home', amount: 120_000 })] });
+    const neg = pushPlan(s, jars, now);
+    expect(neg.map((p) => p.id)).toEqual(['neg:home:2026-11-11', 'neg:home:2026-11-12', 'neg:home:2026-11-13', 'neg:home:2026-11-14', 'neg:home:2026-11-15', 'neg:home:2026-11-16']);
+    expect(neg[0]).toMatchObject({ at: new Date(2026, 10, 11, 9).getTime(), ifNegative: 'home', body: 'Hũ Nhà đang âm 120k. Chuyển tiền vào để bù nhé.' });
+    expect(pushPlan({ ...s, notify: { ...s.notify!, negative: false } }, jars, now)).toEqual([]);
+  });
+
   it('the choices survive a backup and a merge', () => {
-    const notify = { log: false, hour: 7, bills: true, debts: false };
+    const notify = { log: false, hour: 7, bills: true, debts: false, negative: true };
     const r = parseBackup(backupJson(base({ notify })));
     expect(r.ok && r.state.notify).toEqual(notify);
     expect(mergeStates(base(), base({ notify })).notify).toEqual(notify);

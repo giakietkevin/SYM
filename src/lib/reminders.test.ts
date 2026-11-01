@@ -3,7 +3,8 @@ import { reminders } from './reminders';
 import type { Jar, State, Tx } from './types';
 
 const jars: Jar[] = [{ id: 'home', name: 'Nhà', kind: 'spend', hue: 'sage', theme: 'house', goal: 0, created: 0 }];
-const base = (p: Partial<State>): State => ({ jars, txs: [], sound: true, haptics: true, ...p });
+const funded: Tx = { id: 'seed', ts: new Date(2026, 0, 1, 12).getTime(), type: 'income', amount: 1_000_000_000, to: 'wallet', note: '' };
+const base = (p: Partial<State>): State => ({ jars, sound: true, haptics: true, ...p, txs: [funded, ...(p.txs ?? [])] });
 const morning = new Date(2026, 10, 10, 9); // Tuesday 10 Nov 2026
 const evening = new Date(2026, 10, 10, 20);
 const line = (ts: Date, p: Partial<Tx> = {}): Tx => ({ id: `t${ts.getTime()}`, ts: ts.getTime(), type: 'expense', amount: 1, from: 'wallet', note: '', ...p });
@@ -45,5 +46,11 @@ describe('reminders', () => {
     expect(reminders(s, jars, morning)).toEqual([]);
     expect(reminders(s, jars, evening)[0]).toMatchObject({ kind: 'log', tone: 'soon' });
     expect(reminders(base({ txs: [line(new Date(2026, 10, 10, 8))] }), jars, evening)).toEqual([]);
+  });
+
+  it('a jar or the wallet below zero comes first, with how much', () => {
+    const s: State = { jars, sound: true, haptics: true, txs: [line(new Date(2026, 10, 10, 8), { from: 'home', amount: 120_000 })] };
+    const [r] = reminders(s, jars, morning);
+    expect(r).toMatchObject({ kind: 'negative', tone: 'late', loc: 'home', text: 'Hũ Nhà đang âm 120k. Chuyển tiền vào để bù nhé' });
   });
 });

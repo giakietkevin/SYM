@@ -677,7 +677,19 @@ function Main({
             <RemindersCard
               user={user}
               items={remindList}
-              onOpen={(r) => setSheet(r.kind === 'debt' ? { k: 'debts' } : r.kind === 'recurring' ? { k: 'recurring' } : { k: 'quick' })}
+              onOpen={(r) =>
+                setSheet(
+                  r.kind === 'debt'
+                    ? { k: 'debts' }
+                    : r.kind === 'recurring'
+                      ? { k: 'recurring' }
+                      : r.kind === 'negative'
+                        ? r.loc === 'wallet'
+                          ? { k: 'quick' }
+                          : { k: 'transfer', from: 'wallet', to: r.loc }
+                        : { k: 'quick' },
+                )
+              }
             />
 
             <section

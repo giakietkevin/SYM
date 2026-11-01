@@ -368,9 +368,17 @@ function cleanPlan(items) {
       x.title.length <= 80 &&
       typeof x.body === 'string' &&
       x.body.length <= 240 &&
-      (x.ifNoLogSince === undefined || Number.isFinite(x.ifNoLogSince));
+      (x.ifNoLogSince === undefined || Number.isFinite(x.ifNoLogSince)) &&
+      (x.ifNegative === undefined || (typeof x.ifNegative === 'string' && x.ifNegative.length <= 64));
     if (!ok) throw new HttpError(400, 'Lịch thông báo không hợp lệ');
-    return { id: x.id, at: x.at, title: x.title, body: x.body, ...(x.ifNoLogSince !== undefined ? { ifNoLogSince: x.ifNoLogSince } : {}) };
+    return {
+      id: x.id,
+      at: x.at,
+      title: x.title,
+      body: x.body,
+      ...(x.ifNoLogSince !== undefined ? { ifNoLogSince: x.ifNoLogSince } : {}),
+      ...(x.ifNegative !== undefined ? { ifNegative: x.ifNegative } : {}),
+    };
   });
 }
 
@@ -381,6 +389,23 @@ function loggedSince(userId, since) {
   try {
     const txs = JSON.parse(row.json).txs ?? [];
     return txs.some((t) => !t.deleted && t.ts >= since && !/^(r|debt|imp):/.test(String(t.id)));
+  } catch {
+    return false;
+  }
+}
+
+/** Is this place (the wallet or a jar id) below zero right now? The same sum the app does: in minus out. */
+function isNegative(userId, loc) {
+  const row = q.getData.get(userId);
+  if (!row) return false;
+  try {
+    let b = 0;
+    for (const t of JSON.parse(row.json).txs ?? []) {
+      if (t.deleted) continue;
+      if (t.to === loc) b += t.amount;
+      if (t.from === loc) b -= t.amount;
+    }
+    return b < 0;
   } catch {
     return false;
   }
@@ -420,6 +445,7 @@ async function pushTick() {
         // claim it first: a second tick, or a restart, can never send it again
         if (q.markSent.run(plan.user_id, it.id, now).changes === 0) continue;
         if (it.ifNoLogSince !== undefined && loggedSince(plan.user_id, it.ifNoLogSince)) continue;
+        if (it.ifNegative !== undefined && !isNegative(plan.user_id, it.ifNegative)) continue;
         await pushToUser(plan.user_id, { title: it.title, body: it.body, tag: it.id, url: '/' });
       }
     }

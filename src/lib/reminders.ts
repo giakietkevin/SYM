@@ -1,5 +1,5 @@
 import { dueIn, isOpen, remainingOf } from './debts';
-import { balanceOf } from './ledger';
+import { balanceOf, negativePlaces } from './ledger';
 import { short } from './money';
 import { dateKey, nextDate, occurrenceId, occurrences } from './recurring';
 import { streakInfo } from './streak';
@@ -8,7 +8,9 @@ import type { Jar, State } from './types';
 export interface Reminder {
   /** stable for the thing it is about, so dismissing it for today sticks */
   id: string;
-  kind: 'debt' | 'recurring' | 'log';
+  kind: 'debt' | 'recurring' | 'log' | 'negative';
+  /** negative: the place that is below zero */
+  loc?: string;
   tone: 'late' | 'soon' | 'info';
   text: string;
 }
@@ -35,6 +37,10 @@ const when = (days: number) => (days === 0 ? 'Hôm nay' : days === 1 ? 'Ngày ma
 export function reminders(state: State, jars: Jar[], now = new Date()): Reminder[] {
   const out: Reminder[] = [];
   const today = dateKey(now);
+
+  for (const p of negativePlaces(state.txs, jars)) {
+    out.push({ id: `neg:${p.loc}:${today}`, kind: 'negative', tone: 'late', loc: p.loc, text: `${p.name} đang âm ${short(-p.balance)}. Chuyển tiền vào để bù nhé` });
+  }
 
   for (const d of state.debts ?? []) {
     if (!isOpen(d, state.txs)) continue;

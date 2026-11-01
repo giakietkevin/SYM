@@ -9,7 +9,7 @@ export function cleanNotify(x: unknown): NotifyPrefs | undefined {
   const n = x as Partial<NotifyPrefs> | null;
   if (!n || typeof n !== 'object') return undefined;
   const hour = Number.isInteger(n.hour) && n.hour! >= 0 && n.hour! <= 23 ? n.hour! : 20;
-  return { log: n.log !== false, hour, bills: n.bills !== false, debts: n.debts !== false };
+  return { log: n.log !== false, hour, bills: n.bills !== false, debts: n.debts !== false, negative: n.negative !== false };
 }
 
 type Action =

@@ -14,7 +14,7 @@ function readDismissed(user: string): string[] {
   }
 }
 
-const ACTION: Record<Reminder['kind'], string> = { debt: 'Mở', recurring: 'Xem', log: 'Ghi' };
+const ACTION: Record<Reminder['kind'], string> = { debt: 'Mở', recurring: 'Xem', log: 'Ghi', negative: 'Bù tiền' };
 
 export function RemindersCard({ user, items, onOpen }: { user: string; items: Reminder[]; onOpen: (r: Reminder) => void }) {
   const [dismissed, setDismissed] = useState(() => readDismissed(user));

@@ -102,6 +102,13 @@ export function NotifySettings({ prefs, onPrefs }: { prefs: NotifyPrefs; onPrefs
         </div>
         <Toggle on={prefs.debts} onChange={(v) => set({ debts: v })} label="Hạn trả nợ" />
       </div>
+      <div className="setting">
+        <div>
+          <b>Số dư âm</b>
+          <p className="hint">Mỗi sáng, khi Ví tổng hoặc một hũ đang âm tiền.</p>
+        </div>
+        <Toggle on={prefs.negative !== false} onChange={(v) => set({ negative: v })} label="Số dư âm" />
+      </div>
       {on && (
         <button className="btn" onClick={test} disabled={busy}>
           Gửi thử một thông báo
