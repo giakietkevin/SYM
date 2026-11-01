@@ -1,3 +1,4 @@
+import type { PushItem } from './pushplan';
 import type { State } from './types';
 
 /** status 0 means the network itself failed (offline, server down). */
@@ -114,6 +115,11 @@ export const api = {
   deletePasskey: (id: string) => call<{ passkeys: Passkey[] }>('/api/passkey/delete', 'POST', { id }),
   passkeyLoginOptions: () => call<{ challenge: string; rpId: string; timeout: number }>('/api/passkey/login/options', 'POST', {}),
   passkeyLogin: (credential: PasskeyCredentialJSON) => call<Profile>('/api/passkey/login', 'POST', { credential }),
+  pushKey: () => call<{ publicKey: string }>('/api/push/key'),
+  pushSubscribe: (sub: { endpoint: string; keys: { p256dh: string; auth: string } }) => call<{ ok: true }>('/api/push/subscribe', 'POST', sub),
+  pushUnsubscribe: (endpoint: string) => call<{ ok: true }>('/api/push/unsubscribe', 'POST', { endpoint }),
+  pushPlan: (items: PushItem[]) => call<{ ok: true }>('/api/push/plan', 'PUT', { items }),
+  pushTest: () => call<{ delivered: number }>('/api/push/test', 'POST', {}),
   sessions: () => call<{ sessions: Session[] }>('/api/sessions'),
   revokeSession: (id: string) => call<{ ok: true }>('/api/sessions/revoke', 'POST', { id }),
   revokeOthers: () => call<{ ok: true }>('/api/sessions/revoke-others', 'POST', {}),

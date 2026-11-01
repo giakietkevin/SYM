@@ -45,6 +45,8 @@ import { Avatar, CompleteProfile, ProfileScreen } from './components/Profile';
 import { AuthScreen } from './components/AuthScreen';
 import { RecoveryScreen } from './components/Recovery';
 import { signInWithPasskey } from './lib/passkey';
+import { notifyOf, pushPlan } from './lib/pushplan';
+import { disablePush } from './lib/push';
 import { useTheme, type Theme, type ThemePref } from './lib/theme';
 import type { Debt, Loc, Rule, State, Tx } from './lib/types';
 
@@ -166,6 +168,22 @@ function Main({
       }
     }
   }, [state.recurring, state.txs, state.jars, state.rule, today, dispatch, say]);
+
+  // The push schedule for the next week, sent whenever it changes (it is cheap to recompute). Offline: the next change
+  // or the next day retries. The server only sends what has come due and only to devices that switched push on.
+  const sentPlan = useRef('');
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      const items = pushPlan(state, state.jars.filter((j) => !j.deleted));
+      const key = JSON.stringify(items);
+      if (key === sentPlan.current) return;
+      api
+        .pushPlan(items)
+        .then(() => (sentPlan.current = key))
+        .catch(() => {});
+    }, 2000);
+    return () => window.clearTimeout(timer);
+  }, [state, today]);
 
   const sync = useSync({
     user,
@@ -902,6 +920,8 @@ function Main({
           onExportCsv={exportCsv}
           onImport={importBackup}
           onStatement={() => setSheet({ k: 'import' })}
+          notify={notifyOf(state)}
+          onNotify={(prefs) => dispatch({ t: 'notify', prefs })}
           themePref={themePref}
           onTheme={onTheme}
           username={user}
@@ -966,7 +986,10 @@ export function App() {
   }, [enter]);
 
   const leave = (user: string) => {
-    api.logout().catch(() => {});
+    // stop this device's notifications while the session still exists, then end the session
+    disablePush()
+      .catch(() => {})
+      .finally(() => api.logout().catch(() => {}));
     clearCache(user); // the data lives on the server; do not leave it on a shared device
     try {
       localStorage.removeItem(LAST_USER);

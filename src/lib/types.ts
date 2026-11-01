@@ -97,6 +97,18 @@ export interface Debt {
   deleted?: boolean;
 }
 
+/** What to be notified about when the app is closed (push), for the account, on every device it is switched on. */
+export interface NotifyPrefs {
+  /** an evening nudge on days with nothing logged */
+  log: boolean;
+  /** the hour of that nudge, 0-23, local time */
+  hour: number;
+  /** the morning before a recurring line */
+  bills: boolean;
+  /** the morning before, and of, a debt's due date */
+  debts: boolean;
+}
+
 export interface State {
   jars: Jar[];
   txs: Tx[];
@@ -107,6 +119,8 @@ export interface State {
   rolled?: string;
   recurring?: Recurring[];
   debts?: Debt[];
+  /** push notification choices; missing means the defaults */
+  notify?: NotifyPrefs;
 }
 
 /**

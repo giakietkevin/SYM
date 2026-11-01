@@ -2643,3 +2643,9 @@ button {
   justify-content: center;
   gap: 8px;
 }
+
+.hour-select {
+  width: auto;
+  min-width: 84px;
+  padding-right: 8px;
+}

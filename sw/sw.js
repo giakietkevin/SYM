@@ -38,6 +38,39 @@ self.addEventListener('fetch', (event) => {
   if (url.hostname === 'fonts.googleapis.com' || url.hostname === 'fonts.gstatic.com') event.respondWith(fonts(req));
 });
 
+// ── push notifications: the server sends { title, body, tag, url }, encrypted for this browser ──
+self.addEventListener('push', (event) => {
+  let d = {};
+  try {
+    d = event.data ? event.data.json() : {};
+  } catch {
+    d = { body: event.data ? event.data.text() : '' };
+  }
+  event.waitUntil(
+    self.registration.showNotification(d.title || 'SYM', {
+      body: d.body || '',
+      tag: d.tag, // the same reminder replaces itself instead of stacking
+      icon: '/icons/icon-192.png',
+      lang: 'vi',
+      data: { url: d.url || '/' },
+    }),
+  );
+});
+
+// tapping it brings an open SYM window forward, or opens one
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const url = new URL(event.notification.data?.url || '/', self.location.origin).href;
+  event.waitUntil(
+    (async () => {
+      const wins = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+      const open = wins.find((c) => new URL(c.url).origin === self.location.origin);
+      if (open) return open.focus();
+      return self.clients.openWindow(url);
+    })(),
+  );
+});
+
 /** Pages: the network first (so a deploy shows up at once), the cached shell when offline or very slow. */
 async function page(req) {
   const fallback = () => caches.open(SHELL).then((c) => c.match('/'));

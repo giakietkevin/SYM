@@ -36,6 +36,7 @@ export function mergeStates(local: State, remote: State): State {
     recurring: mergeRecurring(local.recurring, remote.recurring),
     debts: mergeDebts(local.debts, remote.debts),
     rolled: [local.rolled, remote.rolled].filter(Boolean).sort().pop(), // YYYY-MM sorts as time
+    notify: local.notify ?? remote.notify,
   };
 }
 

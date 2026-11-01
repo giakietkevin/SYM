@@ -8,6 +8,7 @@ import { dirname, extname, join, normalize, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { ALGS, WebAuthnError, b64u, challengeOf, verifyAssertion, verifyRegistration } from './webauthn.mjs';
+import { allowedEndpoint, generateVapidKeys, sendPush } from './webpush.mjs';
 
 const scryptAsync = promisify(scrypt);
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -44,6 +45,29 @@ db.exec(`
     name TEXT NOT NULL,
     created INTEGER NOT NULL,
     last_used INTEGER
+  );
+  CREATE TABLE IF NOT EXISTS meta (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS push_subs (
+    endpoint TEXT PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    p256dh TEXT NOT NULL,
+    auth TEXT NOT NULL,
+    agent TEXT NOT NULL,
+    created INTEGER NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS push_plans (
+    user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    json TEXT NOT NULL,
+    updated INTEGER NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS push_sent (
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    id TEXT NOT NULL,
+    at INTEGER NOT NULL,
+    PRIMARY KEY (user_id, id)
   );
   CREATE TABLE IF NOT EXISTS data (
     user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
@@ -92,6 +116,20 @@ const q = {
   insertPasskey: db.prepare('INSERT INTO passkeys (id, user_id, public_key, alg, sign_count, name, created) VALUES (?, ?, ?, ?, ?, ?, ?)'),
   usePasskey: db.prepare('UPDATE passkeys SET sign_count = ?, last_used = ? WHERE id = ?'),
   deletePasskey: db.prepare('DELETE FROM passkeys WHERE id = ? AND user_id = ?'),
+  getMeta: db.prepare('SELECT value FROM meta WHERE key = ?'),
+  setMeta: db.prepare('INSERT INTO meta (key, value) VALUES (?, ?)'),
+  // a device that signs in as someone else takes its subscription along: one endpoint, one account
+  upsertSub: db.prepare(
+    'INSERT INTO push_subs (endpoint, user_id, p256dh, auth, agent, created) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(endpoint) DO UPDATE SET user_id = excluded.user_id, p256dh = excluded.p256dh, auth = excluded.auth, agent = excluded.agent',
+  ),
+  subsOf: db.prepare('SELECT * FROM push_subs WHERE user_id = ?'),
+  countSubs: db.prepare('SELECT COUNT(*) AS n FROM push_subs WHERE user_id = ?'),
+  deleteSub: db.prepare('DELETE FROM push_subs WHERE endpoint = ?'),
+  deleteSubOf: db.prepare('DELETE FROM push_subs WHERE endpoint = ? AND user_id = ?'),
+  setPlan: db.prepare('INSERT INTO push_plans (user_id, json, updated) VALUES (?, ?, ?) ON CONFLICT(user_id) DO UPDATE SET json = excluded.json, updated = excluded.updated'),
+  plansWithSubs: db.prepare('SELECT p.user_id, p.json FROM push_plans p WHERE EXISTS (SELECT 1 FROM push_subs s WHERE s.user_id = p.user_id)'),
+  markSent: db.prepare('INSERT OR IGNORE INTO push_sent (user_id, id, at) VALUES (?, ?, ?)'),
+  purgeSent: db.prepare('DELETE FROM push_sent WHERE at < ?'),
   deleteSession: db.prepare('DELETE FROM sessions WHERE token_hash = ?'),
   purgeSessions: db.prepare('DELETE FROM sessions WHERE expires <= ?'),
   getData: db.prepare('SELECT json, rev FROM data WHERE user_id = ?'),
@@ -300,6 +338,98 @@ function cleanPasskeyName(v) {
   const name = String(v ?? '').trim().replace(/\s+/g, ' ').slice(0, 60);
   return name || 'Passkey';
 }
+
+// ───────── push notifications ─────────
+// The app plans what to send (it owns the reminder logic and knows the local time); the server keeps the plan and
+// sends what has come due, once each. VAPID keys are made on first start and kept in the database; set
+// SYM_VAPID_SUBJECT to a mailto: or https: address you own (Apple's push service checks it).
+
+const vapid = (() => {
+  const row = q.getMeta.get('vapid');
+  if (row) return JSON.parse(row.value);
+  const keys = generateVapidKeys();
+  q.setMeta.run('vapid', JSON.stringify(keys));
+  return keys;
+})();
+const VAPID_SUBJECT = process.env.SYM_VAPID_SUBJECT ?? 'mailto:admin@sym.local';
+const PUSH_LATE_MS = 3 * 3600_000; // a reminder more than 3 hours late (server was down) is dropped, not sent
+
+const B64U = /^[A-Za-z0-9_-]+$/;
+
+function cleanPlan(items) {
+  if (!Array.isArray(items) || items.length > 100) throw new HttpError(400, 'Lịch thông báo không hợp lệ');
+  return items.map((x) => {
+    const ok =
+      x &&
+      typeof x.id === 'string' &&
+      x.id.length <= 120 &&
+      Number.isFinite(x.at) &&
+      typeof x.title === 'string' &&
+      x.title.length <= 80 &&
+      typeof x.body === 'string' &&
+      x.body.length <= 240 &&
+      (x.ifNoLogSince === undefined || Number.isFinite(x.ifNoLogSince));
+    if (!ok) throw new HttpError(400, 'Lịch thông báo không hợp lệ');
+    return { id: x.id, at: x.at, title: x.title, body: x.body, ...(x.ifNoLogSince !== undefined ? { ifNoLogSince: x.ifNoLogSince } : {}) };
+  });
+}
+
+/** Lines the person wrote since `since` (what SYM writes itself does not count), read from their saved data. */
+function loggedSince(userId, since) {
+  const row = q.getData.get(userId);
+  if (!row) return false;
+  try {
+    const txs = JSON.parse(row.json).txs ?? [];
+    return txs.some((t) => !t.deleted && t.ts >= since && !/^(r|debt|imp):/.test(String(t.id)));
+  } catch {
+    return false;
+  }
+}
+
+async function pushToUser(userId, payload) {
+  let delivered = 0;
+  for (const sub of q.subsOf.all(userId)) {
+    try {
+      const status = await sendPush({ endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } }, payload, { vapid, subject: VAPID_SUBJECT });
+      if (status === 404 || status === 410) q.deleteSub.run(sub.endpoint); // unsubscribed or expired
+      else if (status >= 200 && status < 300) delivered++;
+      else console.warn(`[push] ${new URL(sub.endpoint).hostname} answered ${status}`);
+    } catch (e) {
+      console.warn(`[push] ${new URL(sub.endpoint).hostname}: ${e.message}`);
+    }
+  }
+  return delivered;
+}
+
+let pushing = false;
+async function pushTick() {
+  if (pushing) return;
+  pushing = true;
+  try {
+    const now = Date.now();
+    q.purgeSent.run(now - 30 * 86400_000);
+    for (const plan of q.plansWithSubs.all()) {
+      let items;
+      try {
+        items = JSON.parse(plan.json);
+      } catch {
+        continue;
+      }
+      for (const it of items) {
+        if (it.at > now || it.at < now - PUSH_LATE_MS) continue;
+        // claim it first: a second tick, or a restart, can never send it again
+        if (q.markSent.run(plan.user_id, it.id, now).changes === 0) continue;
+        if (it.ifNoLogSince !== undefined && loggedSince(plan.user_id, it.ifNoLogSince)) continue;
+        await pushToUser(plan.user_id, { title: it.title, body: it.body, tag: it.id, url: '/' });
+      }
+    }
+  } catch (e) {
+    console.error('[push]', e);
+  } finally {
+    pushing = false;
+  }
+}
+setInterval(pushTick, 60_000).unref();
 
 // ───────── recovery code ─────────
 // No email service here, so a forgotten password is recovered with a code shown once, at sign-up (or when
@@ -606,6 +736,47 @@ async function api(req, res, path) {
     }
     q.usePasskey.run(count, Date.now(), pk.id);
     return startSession(req, res, user);
+  }
+
+  // push notifications: the public key, (un)subscribe this device, the plan, and a test message
+  if (method === 'GET' && path === '/api/push/key') {
+    return send(res, 200, { publicKey: vapid.publicKey });
+  }
+
+  if (method === 'POST' && path === '/api/push/subscribe') {
+    const u = requireUser(req);
+    const body = await readJson(req);
+    const endpoint = String(body.endpoint ?? '');
+    const p256dh = String(body.keys?.p256dh ?? '');
+    const auth = String(body.keys?.auth ?? '');
+    if (endpoint.length > 1000 || !allowedEndpoint(endpoint)) throw new HttpError(400, 'Dịch vụ thông báo của trình duyệt này chưa được hỗ trợ');
+    if (!B64U.test(p256dh) || Buffer.from(p256dh, 'base64url').length !== 65 || !B64U.test(auth) || Buffer.from(auth, 'base64url').length < 16) {
+      throw new HttpError(400, 'Khoá thông báo không hợp lệ');
+    }
+    if (q.countSubs.get(u.id).n >= 10 && !q.subsOf.all(u.id).some((s) => s.endpoint === endpoint)) throw new HttpError(400, 'Tối đa 10 thiết bị nhận thông báo');
+    q.upsertSub.run(endpoint, u.id, p256dh, auth, String(req.headers['user-agent'] ?? '').slice(0, 300), Date.now());
+    return send(res, 200, { ok: true });
+  }
+
+  if (method === 'POST' && path === '/api/push/unsubscribe') {
+    const u = requireUser(req);
+    const body = await readJson(req);
+    q.deleteSubOf.run(String(body.endpoint ?? '').slice(0, 1000), u.id);
+    return send(res, 200, { ok: true });
+  }
+
+  if (method === 'PUT' && path === '/api/push/plan') {
+    const u = requireUser(req);
+    const body = await readJson(req);
+    q.setPlan.run(u.id, JSON.stringify(cleanPlan(body.items)), Date.now());
+    return send(res, 200, { ok: true });
+  }
+
+  if (method === 'POST' && path === '/api/push/test') {
+    const u = requireUser(req);
+    throttle(`pushtest|${u.id}`, 5, 10 * 60_000)();
+    const delivered = await pushToUser(u.id, { title: 'SYM', body: 'Thông báo đã bật. Xu sẽ nhắc bạn đúng lúc.', tag: 'test', url: '/' });
+    return send(res, 200, { delivered });
   }
 
   // the devices signed in to this account

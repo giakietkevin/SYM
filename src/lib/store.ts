@@ -2,7 +2,15 @@ import { useMemo, useReducer } from 'react';
 import { balanceOf, live, mergeStates } from './ledger';
 import { seed } from './seed';
 import { paysDebt } from './debts';
-import type { Debt, Jar, Loc, Recurring, Rule, State, Tx } from './types';
+import type { Debt, Jar, Loc, NotifyPrefs, Recurring, Rule, State, Tx } from './types';
+
+/** Notification choices from storage or a backup: only well-formed values survive. */
+export function cleanNotify(x: unknown): NotifyPrefs | undefined {
+  const n = x as Partial<NotifyPrefs> | null;
+  if (!n || typeof n !== 'object') return undefined;
+  const hour = Number.isInteger(n.hour) && n.hour! >= 0 && n.hour! <= 23 ? n.hour! : 20;
+  return { log: n.log !== false, hour, bills: n.bills !== false, debts: n.debts !== false };
+}
 
 type Action =
   | { t: 'addTx'; tx: Tx }
@@ -24,6 +32,7 @@ type Action =
   | { t: 'saveJar'; jar: Jar }
   | { t: 'deleteJar'; id: string }
   | { t: 'flags'; sound?: boolean; haptics?: boolean }
+  | { t: 'notify'; prefs: NotifyPrefs }
   | { t: 'reset' }
   | { t: 'load'; state: State };
 
@@ -104,6 +113,8 @@ export function reducer(s: State, a: Action): State {
       }
       return { ...s, txs, jars: s.jars.map((j) => (j.id === a.id ? { ...j, deleted: true } : j)) };
     }
+    case 'notify':
+      return { ...s, notify: a.prefs };
     case 'flags':
       return { ...s, sound: a.sound ?? s.sound, haptics: a.haptics ?? s.haptics };
     case 'reset':
@@ -126,6 +137,7 @@ export function parseState(x: unknown): State | null {
     rolled: typeof s.rolled === 'string' ? s.rolled : undefined,
     recurring: Array.isArray(s.recurring) ? s.recurring : undefined,
     debts: Array.isArray(s.debts) ? s.debts : undefined,
+    notify: cleanNotify(s.notify),
   };
 }
 

@@ -2,6 +2,8 @@ import { useRef, useState } from 'react';
 import type { SyncStatus } from '../lib/sync';
 import type { ThemePref } from '../lib/theme';
 import { Seg, Sheet, Toggle } from './ui';
+import { NotifySettings } from './NotifySettings';
+import type { NotifyPrefs } from '../lib/types';
 
 const STATUS: Record<SyncStatus, string> = {
   saved: 'Đã lưu lên máy chủ',
@@ -21,6 +23,8 @@ export function SettingsSheet({
   onExportCsv,
   onImport,
   onStatement,
+  notify,
+  onNotify,
   themePref,
   onTheme,
   sound,
@@ -41,6 +45,8 @@ export function SettingsSheet({
   onExportCsv: () => void;
   onImport: (file: File) => void;
   onStatement: () => void;
+  notify: NotifyPrefs;
+  onNotify: (p: NotifyPrefs) => void;
   themePref: ThemePref;
   onTheme: (p: ThemePref) => void;
   sound: boolean;
@@ -92,6 +98,7 @@ export function SettingsSheet({
           Mở
         </button>
       </div>
+      <NotifySettings prefs={notify} onPrefs={onNotify} />
       <section className="field">
         <h3 className="label">Giao diện</h3>
         <Seg

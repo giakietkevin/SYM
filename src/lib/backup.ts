@@ -1,4 +1,5 @@
 import { dateKey } from './recurring';
+import { cleanNotify } from './store';
 import type { Debt, Hue, Jar, Recurring, State, Theme, Tx } from './types';
 import { HUES, THEME_NAMES } from './types';
 
@@ -170,6 +171,7 @@ export function parseBackup(text: string): ParsedBackup {
     rolled: typeof src.rolled === 'string' && /^\d{4}-\d{2}$/.test(src.rolled) ? src.rolled : undefined,
     recurring: recurring.length ? (recurring as Recurring[]) : undefined,
     debts: debts.length ? (debts as Debt[]) : undefined,
+    notify: cleanNotify(src.notify),
   };
   return { ok: true, state, jars: state.jars.filter((j) => !j.deleted).length, txs: state.txs.filter((t) => !t.deleted).length };
 }
