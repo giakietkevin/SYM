@@ -1,0 +1,9 @@
+{$SYM_DOMAIN} {
+	encode zstd gzip
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		Referrer-Policy "same-origin"
+		-Server
+	}
+	reverse_proxy sym:8787
+}

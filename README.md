@@ -15,6 +15,8 @@ npm run build
 HOST=0.0.0.0 PORT=8787 npm start     # serves the API and the built app together
 ```
 
+**Running it for real (free, on Oracle Cloud Always Free, with Docker and Caddy): see [docs/DEPLOY.md](docs/DEPLOY.md).** Behind a reverse proxy set `SYM_TRUST_PROXY=1` so the per-address rate limits use the client's address (the last `X-Forwarded-For` entry) instead of the proxy's; only set it when the proxy is the sole way in. `GET /api/health` answers `{"ok":true}` when the database is reachable, and `node scripts/backup.mjs [folder]` writes a consistent snapshot while the server runs (14 newest kept).
+
 Put it behind HTTPS in production and set `SYM_SECURE=1` (or send `X-Forwarded-Proto: https`) so the session cookie is `Secure`. Passkeys use this host as the relying party; behind a proxy that changes the Host header, set `SYM_RP_ID` (the domain, e.g. `sym.example.com`) and `SYM_ORIGIN` (`https://sym.example.com`). Back up `server/data/sym.db` (the SQLite file, override with `SYM_DB`).
 
 ## Accounts and storage

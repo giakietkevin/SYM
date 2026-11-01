@@ -255,7 +255,16 @@ function throttle(key, limit, windowMs) {
   };
 }
 
-const ip = (req) => req.socket.remoteAddress ?? 'unknown';
+// Behind a reverse proxy every request comes from the proxy's address, so the per-address limits would be shared by
+// everyone. With SYM_TRUST_PROXY=1 the address is the last entry of X-Forwarded-For: the one the proxy itself appended
+// (entries to its left are whatever the client claimed). Only set it when the proxy is the sole way in.
+const ip = (req) => {
+  if (process.env.SYM_TRUST_PROXY === '1') {
+    const last = String(req.headers['x-forwarded-for'] ?? '').split(',').pop().trim();
+    if (last) return last.slice(0, 64);
+  }
+  return req.socket.remoteAddress ?? 'unknown';
+};
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 
@@ -630,6 +639,12 @@ async function api(req, res, path) {
     const token = cookies(req).sym_session;
     if (token) q.deleteSession.run(sha(token));
     return send(res, 200, { ok: true }, { 'Set-Cookie': sessionCookie(req, '', 0) });
+  }
+
+  // for the container health check: the database answers
+  if (method === 'GET' && path === '/api/health') {
+    db.prepare('SELECT 1').get();
+    return send(res, 200, { ok: true });
   }
 
   if (method === 'GET' && path === '/api/me') {

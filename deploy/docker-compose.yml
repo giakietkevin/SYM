@@ -1,0 +1,35 @@
+# SYM + Caddy (automatic HTTPS). Run from this folder: docker compose up -d --build
+services:
+  sym:
+    build: ..
+    restart: unless-stopped
+    environment:
+      SYM_SECURE: "1"
+      SYM_TRUST_PROXY: "1"
+      SYM_ORIGIN: https://${SYM_DOMAIN:?set SYM_DOMAIN in .env}
+      SYM_RP_ID: ${SYM_DOMAIN}
+      SYM_VAPID_SUBJECT: ${SYM_VAPID_SUBJECT:?set SYM_VAPID_SUBJECT in .env}
+    volumes:
+      - sym-data:/data
+    # no published port: only Caddy can reach it
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    depends_on:
+      - sym
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      SYM_DOMAIN: ${SYM_DOMAIN}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+volumes:
+  sym-data:
+  caddy-data:
+  caddy-config:
