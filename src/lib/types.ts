@@ -56,8 +56,17 @@ export interface Recurring {
   /** income: where it lands */
   to?: Loc;
   note: string;
-  /** day of the month, 1-31; a short month uses its last day */
+  /** how often; missing means monthly (items made before the other choices existed) */
+  freq?: 'monthly' | 'weekly' | 'yearly' | 'days';
+  /**
+   * monthly / yearly: day of the month, 1-31 (a short month uses its last day).
+   * weekly: day of the week, 1 = Monday ... 7 = Sunday. days: unused (the start date anchors it).
+   */
   day: number;
+  /** yearly: the month, 1-12 */
+  month?: number;
+  /** days: every this many days, 1-365 */
+  every?: number;
   /** first date it may apply, YYYY-MM-DD */
   start: string;
   /** income into the wallet follows the auto-split rule */
@@ -80,8 +89,11 @@ export interface Debt {
   from?: Loc;
   /** lines created together (a bill and its debts) undo together */
   batch?: string;
+  /** paid in full in one go: the line `debt:<id>`. Partial payments are lines `debt:<id>#<n>` and set no flag. */
   settled?: boolean;
   settledTx?: string;
+  /** when it should be paid back, YYYY-MM-DD */
+  due?: string;
   deleted?: boolean;
 }
 

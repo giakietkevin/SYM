@@ -1,8 +1,8 @@
 import { useState } from 'react';
-import { byPerson, splitBill, totals } from '../lib/debts';
+import { byPerson, customShares, dueIn, isDone, paidOf, remainingOf, splitBill, totals, type SplitMode } from '../lib/debts';
 import { evalExpr, fmtD } from '../lib/money';
 import type { Store } from '../lib/store';
-import { HUES, WALLET_TINT, type Debt, type Loc } from '../lib/types';
+import { HUES, WALLET_TINT, type Debt, type Loc, type Tx } from '../lib/types';
 import { AmountPad } from './AmountPad';
 import { Seg, Sheet } from './ui';
 
@@ -12,6 +12,8 @@ export interface BillInput {
   note: string;
   friends: string[];
   includeMe: boolean;
+  /** uneven shares, one per friend (missing: equal) */
+  shares?: number[];
 }
 
 export interface LoanInput {
@@ -19,11 +21,19 @@ export interface LoanInput {
   dir: Debt['dir'];
   amount: number;
   note: string;
+  due?: string;
+}
+
+/** "Hạn hôm nay", "Còn 3 ngày", "Quá hạn 2 ngày" */
+export function dueLabel(days: number): string {
+  if (days === 0) return 'Hạn hôm nay';
+  if (days === 1) return 'Hạn ngày mai';
+  return days > 0 ? `Còn ${days} ngày` : `Quá hạn ${-days} ngày`;
 }
 
 /** Home card: what friends owe, what I owe, and the way in to split a bill. */
-export function DebtCard({ debts, onOpen }: { debts: Debt[] | undefined; onOpen: () => void }) {
-  const t = totals(debts);
+export function DebtCard({ debts, txs, onOpen }: { debts: Debt[] | undefined; txs: Tx[]; onOpen: () => void }) {
+  const t = totals(debts, txs);
   const none = t.owedToMe === 0 && t.iOwe === 0;
   return (
     <section className="debt-card" aria-label="Chia tiền nhóm và nợ">
@@ -55,7 +65,7 @@ export function DebtSheet({
   store: Store;
   onBill: (b: BillInput) => void;
   onLoan: (l: LoanInput) => void;
-  onSettle: (d: Debt, place: Loc) => void;
+  onSettle: (d: Debt, place: Loc, amount: number) => void;
   onDelete: (d: Debt) => void;
   onClose: () => void;
 }) {
@@ -95,20 +105,21 @@ function List({
 }: {
   store: Store;
   onMode: (m: 'bill' | 'loan') => void;
-  onSettle: (d: Debt, place: Loc) => void;
+  onSettle: (d: Debt, place: Loc, amount: number) => void;
   onDelete: (d: Debt) => void;
   onClose: () => void;
 }) {
   const debts = store.state.debts ?? [];
-  const people = byPerson(debts);
-  const t = totals(debts);
-  const done = debts.filter((d) => !d.deleted && d.settled).sort((a, b) => b.ts - a.ts).slice(0, 8);
-  const [settling, setSettling] = useState<{ id: string; place: Loc } | null>(null);
+  const txs = store.state.txs;
+  const people = byPerson(debts, txs);
+  const t = totals(debts, txs);
+  const done = debts.filter((d) => isDone(d, txs)).sort((a, b) => b.ts - a.ts).slice(0, 8);
+  const [settling, setSettling] = useState<{ id: string; place: Loc; expr: string } | null>(null);
   const spendJars = store.jars.filter((j) => j.kind === 'spend');
 
   const start = (d: Debt) => {
     const fallback: Loc = d.dir === 'owed' ? (d.from && store.jars.some((j) => j.id === d.from) ? d.from : 'wallet') : (spendJars[0]?.id ?? '');
-    setSettling({ id: d.id, place: fallback });
+    setSettling({ id: d.id, place: fallback, expr: String(remainingOf(d, txs)) });
   };
 
   const places = (d: Debt) =>
@@ -156,9 +167,11 @@ function List({
                     <span className="tx-title">{d.note || (d.dir === 'owed' ? 'Khoản cho mượn' : 'Khoản đã mượn')}</span>
                     <span className="tx-sub">
                       {d.dir === 'owed' ? 'Họ nợ bạn' : 'Bạn nợ họ'} · {date(d.ts)}
+                      {paidOf(d, txs) > 0 && ` · đã trả ${fmtD(paidOf(d, txs))}/${fmtD(d.amount)}`}
                     </span>
+                    {dueIn(d) !== null && <span className={`due-tag ${dueIn(d)! < 0 ? 'late' : dueIn(d)! <= 3 ? 'soon' : ''}`}>{dueLabel(dueIn(d)!)}</span>}
                   </span>
-                  <span className={`num ${d.dir === 'owed' ? 'pos' : ''}`}>{fmtD(d.amount)}</span>
+                  <span className={`num ${d.dir === 'owed' ? 'pos' : ''}`}>{fmtD(remainingOf(d, txs))}</span>
                 </div>
                 {settling?.id === d.id ? (
                   <div className="debt-settle">
@@ -176,26 +189,49 @@ function List({
                               aria-checked={settling.place === pl.id}
                               className={`jar-chip ${settling.place === pl.id ? 'on' : ''}`}
                               style={{ background: pl.bg, color: pl.ink }}
-                              onClick={() => setSettling({ id: d.id, place: pl.id })}
+                              onClick={() => setSettling({ ...settling, place: pl.id })}
                             >
                               <b>{pl.name}</b>
                             </button>
                           ))}
                         </div>
-                        <div className="row">
-                          <button className="btn" onClick={() => setSettling(null)}>
-                            Hủy
-                          </button>
-                          <button
-                            className="btn primary"
-                            onClick={() => {
-                              onSettle(d, settling.place);
-                              setSettling(null);
-                            }}
-                          >
-                            {d.dir === 'owed' ? `Đã nhận ${fmtD(d.amount)}` : `Đã trả ${fmtD(d.amount)}`}
-                          </button>
-                        </div>
+                        {(() => {
+                          const left = remainingOf(d, txs);
+                          const amount = evalExpr(settling.expr) ?? 0;
+                          const ok = amount > 0 && amount <= left;
+                          return (
+                            <>
+                              <label className="field">
+                                <span className="label">Số tiền {d.dir === 'owed' ? 'nhận' : 'trả'} lần này</span>
+                                <input
+                                  className="input num"
+                                  inputMode="decimal"
+                                  value={settling.expr}
+                                  onChange={(e) => setSettling({ ...settling, expr: e.target.value })}
+                                  aria-invalid={!ok}
+                                />
+                                <span className="hint">
+                                  {amount > left ? `Nhiều hơn số còn lại (${fmtD(left)}).` : amount > 0 && amount < left ? `Trả một phần, còn lại ${fmtD(left - amount)}.` : `Còn lại ${fmtD(left)}. Nhập ít hơn để trả một phần.`}
+                                </span>
+                              </label>
+                              <div className="row">
+                                <button className="btn" onClick={() => setSettling(null)}>
+                                  Hủy
+                                </button>
+                                <button
+                                  className="btn primary"
+                                  disabled={!ok}
+                                  onClick={() => {
+                                    onSettle(d, settling.place, amount);
+                                    setSettling(null);
+                                  }}
+                                >
+                                  {d.dir === 'owed' ? `Đã nhận ${fmtD(amount)}` : `Đã trả ${fmtD(amount)}`}
+                                </button>
+                              </div>
+                            </>
+                          );
+                        })()}
                       </>
                     )}
                   </div>
@@ -240,10 +276,21 @@ function BillForm({ store, onBack, onSubmit, onClose }: { store: Store; onBack: 
   const [name, setName] = useState('');
   const [includeMe, setIncludeMe] = useState(true);
   const [err, setErr] = useState('');
+  const [mode, setMode] = useState<SplitMode>('equal');
+  const [values, setValues] = useState<Record<string, string>>({});
 
   const total = evalExpr(expr) ?? 0;
-  const { share, mine } = splitBill(total, friends.length, includeMe);
-  const canSave = total > 0 && friends.length > 0 && !!from && share > 0;
+  const equal = splitBill(total, friends.length, includeMe);
+  const custom =
+    mode === 'equal'
+      ? null
+      : customShares(
+          total,
+          mode,
+          friends.map((f) => (mode === 'percent' ? Number((values[f] ?? '').replace(',', '.')) || 0 : (evalExpr(values[f] ?? '') ?? 0))),
+        );
+  const mine = custom ? custom.mine : equal.mine;
+  const canSave = total > 0 && friends.length > 0 && !!from && (custom ? !custom.error : equal.share > 0);
 
   const add = () => {
     const n = name.trim().replace(/\s+/g, ' ').slice(0, 40);
@@ -322,22 +369,63 @@ function BillForm({ store, onBack, onSubmit, onClose }: { store: Store; onBack: 
         )}
       </section>
 
-      <label className="check">
-        <input type="checkbox" checked={includeMe} onChange={(e) => setIncludeMe(e.target.checked)} />
-        <span>
-          Tính cả phần của mình
-          <small>Bỏ chọn nếu bạn chỉ trả hộ, không dùng gì.</small>
-        </span>
-      </label>
+      {friends.length > 0 && (
+        <section className="field">
+          <h3 className="label">Cách chia</h3>
+          <Seg
+            label="Cách chia"
+            value={mode}
+            onChange={setMode}
+            options={[
+              { value: 'equal', label: 'Chia đều' },
+              { value: 'amount', label: 'Theo số tiền' },
+              { value: 'percent', label: 'Theo %' },
+            ]}
+          />
+        </section>
+      )}
+
+      {mode === 'equal' ? (
+        <label className="check">
+          <input type="checkbox" checked={includeMe} onChange={(e) => setIncludeMe(e.target.checked)} />
+          <span>
+            Tính cả phần của mình
+            <small>Bỏ chọn nếu bạn chỉ trả hộ, không dùng gì.</small>
+          </span>
+        </label>
+      ) : (
+        friends.length > 0 && (
+          <ul className="share-list">
+            {friends.map((f, i) => (
+              <li key={f}>
+                <span className="share-who">{f}</span>
+                <input
+                  className="input num"
+                  inputMode="decimal"
+                  value={values[f] ?? ''}
+                  onChange={(e) => setValues({ ...values, [f]: e.target.value })}
+                  placeholder={mode === 'percent' ? '%' : '50k'}
+                  aria-label={`Phần của ${f}${mode === 'percent' ? ' (phần trăm)' : ''}`}
+                />
+                {mode === 'percent' && <span className="hint num share-amt">{fmtD(custom?.shares[i] ?? 0)}</span>}
+              </li>
+            ))}
+          </ul>
+        )
+      )}
 
       {total > 0 && friends.length > 0 && (
-        <p className="hint num" role="status">
-          Mỗi bạn nợ {fmtD(share)}. Phần của bạn: {fmtD(mine)}.
+        <p className={custom?.error ? 'error' : 'hint num'} role="status">
+          {custom?.error ?? (mode === 'equal' ? `Mỗi bạn nợ ${fmtD(equal.share)}. Phần của bạn: ${fmtD(mine)}.` : `Phần của bạn: ${fmtD(mine)}.`)}
         </p>
       )}
 
       <div className="sticky-cta">
-        <button className="btn primary block" disabled={!canSave} onClick={() => onSubmit({ total, from, note: note.trim(), friends, includeMe })}>
+        <button
+          className="btn primary block"
+          disabled={!canSave}
+          onClick={() => onSubmit({ total, from, note: note.trim(), friends, includeMe, ...(custom ? { shares: custom.shares } : {}) })}
+        >
           {canSave ? `Chia ${fmtD(total)} cho ${friends.length} bạn` : 'Nhập số tiền và thêm bạn bè'}
         </button>
       </div>
@@ -350,6 +438,7 @@ function LoanForm({ onBack, onSubmit, onClose }: { onBack: () => void; onSubmit:
   const [who, setWho] = useState('');
   const [expr, setExpr] = useState('');
   const [note, setNote] = useState('');
+  const [due, setDue] = useState('');
   const amount = evalExpr(expr) ?? 0;
   const canSave = amount > 0 && who.trim().length > 0;
 
@@ -377,11 +466,16 @@ function LoanForm({ onBack, onSubmit, onClose }: { onBack: () => void; onSubmit:
         <span className="label">Ghi chú</span>
         <input className="input" value={note} onChange={(e) => setNote(e.target.value)} maxLength={80} placeholder="Tiền cà phê, mượn trước…" />
       </label>
+      <label className="field">
+        <span className="label">Hạn trả (không bắt buộc)</span>
+        <input className="input" type="date" value={due} onChange={(e) => setDue(e.target.value)} />
+        <span className="hint">SYM sẽ nhắc trên màn hình Tổng quan khi gần đến hạn.</span>
+      </label>
       <div className="sticky-cta">
         <button
           className="btn primary block"
           disabled={!canSave}
-          onClick={() => onSubmit({ who: who.trim().replace(/\s+/g, ' '), dir, amount, note: note.trim() })}
+          onClick={() => onSubmit({ who: who.trim().replace(/\s+/g, ' '), dir, amount, note: note.trim(), ...(due ? { due } : {}) })}
         >
           {canSave ? `Ghi ${fmtD(amount)}` : 'Nhập tên và số tiền'}
         </button>

@@ -20,6 +20,7 @@ export function SettingsSheet({
   onExportJson,
   onExportCsv,
   onImport,
+  onStatement,
   themePref,
   onTheme,
   sound,
@@ -39,6 +40,7 @@ export function SettingsSheet({
   onExportJson: () => void;
   onExportCsv: () => void;
   onImport: (file: File) => void;
+  onStatement: () => void;
   themePref: ThemePref;
   onTheme: (p: ThemePref) => void;
   sound: boolean;
@@ -78,6 +80,15 @@ export function SettingsSheet({
           <p className="hint">{recurringSummary}</p>
         </div>
         <button className="btn" onClick={onRecurring}>
+          Mở
+        </button>
+      </div>
+      <div className="setting">
+        <div>
+          <b>Nhập sao kê ngân hàng</b>
+          <p className="hint">Đưa giao dịch từ file CSV của ngân hàng vào SYM, không ghi trùng.</p>
+        </div>
+        <button className="btn" onClick={onStatement}>
           Mở
         </button>
       </div>

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { billLines, byPerson, mergeDebts, settleTx, splitBill, totals } from './debts';
+import { billLines, byPerson, customShares, dueIn, isDone, isOpen, mergeDebts, paidOf, partTx, paysDebt, remainingOf, settleTx, splitBill, totals } from './debts';
+import { reducer } from './store';
 import { goalPlan } from './goal';
 import { streakInfo } from './streak';
 import { backupJson, parseBackup, txCsv } from './backup';
@@ -40,6 +41,78 @@ describe('debts', () => {
     const merged = mergeDebts([d({ id: '1' }), d({ id: '2', deleted: true })], [d({ id: '1', settled: true, settledTx: 'debt:1' }), d({ id: '2' })]);
     expect(merged?.find((x) => x.id === '1')).toMatchObject({ settled: true, settledTx: 'debt:1' });
     expect(merged?.find((x) => x.id === '2')?.deleted).toBe(true);
+  });
+});
+
+describe('uneven bill shares', () => {
+  it('by amount: the payer keeps the rest', () => {
+    expect(customShares(500, 'amount', [200, 150])).toEqual({ shares: [200, 150], mine: 150, error: null });
+  });
+
+  it('by percent: rounded down, dust stays with the payer', () => {
+    expect(customShares(1000, 'percent', [33.3, 33.3])).toEqual({ shares: [333, 333], mine: 334, error: null });
+  });
+
+  it('refuses more than the bill, over 100%, or an empty share', () => {
+    expect(customShares(100, 'amount', [80, 30]).error).toMatch(/lớn hơn hóa đơn/);
+    expect(customShares(100, 'percent', [60, 50]).error).toMatch(/100%/);
+    expect(customShares(100, 'amount', [100, 0]).error).toMatch(/lớn hơn 0/);
+  });
+
+  it('billLines uses the given shares', () => {
+    const { debts } = billLines({ id: 'b', total: 500, from: 'f', note: '', friends: ['An', 'Bình'], includeMe: true, now: 1, shares: [200, 150] });
+    expect(debts.map((d) => d.amount)).toEqual([200, 150]);
+  });
+});
+
+describe('partial payments and due dates', () => {
+  const loan: Debt = { id: 'L', who: 'An', dir: 'owed', amount: 300, note: 'mượn', ts: 1 };
+  const pay = (n: string, amount: number, deleted?: boolean): Tx => ({ ...partTx(loan, amount, 'wallet', 1, n), ...(deleted ? { deleted } : {}) });
+
+  it('parts add up; a deleted part does not count', () => {
+    const txs = [pay('a', 100), pay('b', 50), pay('c', 999, true)];
+    expect(paidOf(loan, txs)).toBe(150);
+    expect(remainingOf(loan, txs)).toBe(150);
+    expect(isOpen(loan, txs)).toBe(true);
+  });
+
+  it('a debt paid in parts is done and leaves the totals', () => {
+    const txs = [pay('a', 100), pay('b', 200)];
+    expect(isDone(loan, txs)).toBe(true);
+    expect(isOpen(loan, txs)).toBe(false);
+    expect(totals([loan], txs)).toEqual({ owedToMe: 0, iOwe: 0 });
+  });
+
+  it('totals and people use what is left', () => {
+    const txs = [pay('a', 100)];
+    expect(totals([loan], txs).owedToMe).toBe(200);
+    expect(byPerson([loan], txs)[0].net).toBe(200);
+  });
+
+  it('a part never matches another debt with a similar id', () => {
+    expect(paysDebt({ id: 'L' }, pay('a', 1))).toBe(true);
+    expect(paysDebt({ id: 'L:0' }, pay('a', 1))).toBe(false);
+    expect(paysDebt({ id: 'L' }, { id: 'debt:L:0', ts: 1, type: 'income', amount: 1, note: '' })).toBe(false);
+  });
+
+  it('undoing a bill also undoes parts paid against it', () => {
+    const debt: Debt = { id: 'bill:0', who: 'An', dir: 'owed', amount: 100, note: '', ts: 1, batch: 'bill' };
+    const s: State = {
+      jars: [],
+      sound: true,
+      haptics: true,
+      debts: [debt],
+      txs: [{ id: 'bill', ts: 1, type: 'expense', amount: 300, from: 'wallet', batch: 'bill', note: '' }, partTx(debt, 40, 'wallet', 2, 'x')],
+    };
+    expect(reducer(s, { t: 'undoBill', id: 'bill' }).txs.every((t) => t.deleted)).toBe(true);
+  });
+
+  it('counts days to the due date', () => {
+    const now = new Date(2026, 10, 10, 18);
+    expect(dueIn({ due: '2026-11-10' }, now)).toBe(0);
+    expect(dueIn({ due: '2026-11-13' }, now)).toBe(3);
+    expect(dueIn({ due: '2026-11-01' }, now)).toBe(-9);
+    expect(dueIn({}, now)).toBeNull();
   });
 });
 

@@ -4,6 +4,7 @@ import { ruleTotal } from '../lib/split';
 import type { Store } from '../lib/store';
 import { HUES, WALLET_TINT, type Jar, type Tx } from '../lib/types';
 import { AmountPad } from './AmountPad';
+import { TagChips } from './TagChips';
 import { Seg, Sheet } from './ui';
 
 export type NewTx = Omit<Tx, 'id' | 'ts'>;
@@ -149,8 +150,9 @@ export function QuickAdd({
 
       <label className="field">
         <span className="label">Ghi chú</span>
-        <input className="input" value={note} onChange={(e) => setNote(e.target.value)} placeholder={type === 'expense' ? 'Ví dụ: phở bò' : 'Ví dụ: lương, tiền thưởng'} maxLength={60} />
+        <input className="input" value={note} onChange={(e) => setNote(e.target.value)} placeholder={type === 'expense' ? 'Ví dụ: phở bò #sáng' : 'Ví dụ: lương, tiền thưởng'} maxLength={120} />
       </label>
+      <TagChips txs={store.state.txs} note={note} onNote={setNote} />
 
       {canSplit && (
         <label className="check">

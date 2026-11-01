@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { evalExpr, fmtD, fmtSigned } from '../lib/money';
-import { dateKey, nextDate } from '../lib/recurring';
+import { afterLastWritten, dateKey, freqOf, nextDate, scheduleLabel, weekdayName, type Freq } from '../lib/recurring';
 import type { Store } from '../lib/store';
 import { uid } from '../lib/store';
 import { HUES, WALLET_TINT, type Loc, type Recurring } from '../lib/types';
@@ -47,7 +47,7 @@ export function RecurringSheet({
 
   return (
     <Sheet title="Giao dịch định kỳ" onClose={onClose}>
-      <p className="hint">Tiền trọ, Netflix, lương… Mỗi tháng SYM tự ghi vào đúng ngày, không cần bạn nhớ. Mở app sau vài ngày vắng mặt, các khoản đến hạn vẫn được ghi bù.</p>
+      <p className="hint">Tiền trọ, Netflix, lương, bảo hiểm… SYM tự ghi vào đúng ngày (hằng tuần, hằng tháng, hằng năm hoặc mỗi vài ngày), không cần bạn nhớ. Mở app sau vài ngày vắng mặt, các khoản đến hạn vẫn được ghi bù.</p>
       {list.length ? (
         <ul className="txs rec-list">
           {list.map((r) => {
@@ -58,7 +58,7 @@ export function RecurringSheet({
                   <span className="tx-main">
                     <span className="tx-title">{r.note}</span>
                     <span className="tx-sub">
-                      Ngày {r.day} hằng tháng · {r.type === 'expense' ? place : `vào ${place}`}
+                      {scheduleLabel(r)} · {r.type === 'expense' ? place : `vào ${place}`}
                     </span>
                   </span>
                   <span className={`tx-amt num ${r.type}`}>{fmtSigned(r.amount, r.type === 'income' ? '+' : '−')}</span>
@@ -96,7 +96,12 @@ function Editor({
   const [type, setType] = useState<Recurring['type']>(item?.type ?? 'expense');
   const [expr, setExpr] = useState(item ? String(item.amount) : '');
   const [note, setNote] = useState(item?.note ?? '');
-  const [day, setDay] = useState(String(item?.day ?? new Date().getDate()));
+  const [freq, setFreq] = useState<Freq>(item ? freqOf(item) : 'monthly');
+  const [day, setDay] = useState(String(item && freqOf(item) !== 'weekly' ? item.day : new Date().getDate()));
+  const [weekday, setWeekday] = useState(item && freqOf(item) === 'weekly' ? item.day : ((new Date().getDay() + 6) % 7) + 1);
+  const [month, setMonth] = useState(String(item?.month ?? new Date().getMonth() + 1));
+  const [every, setEvery] = useState(String(item?.every ?? 7));
+  const [startDay, setStartDay] = useState(item?.start ?? dateKey(new Date()));
   const [from, setFrom] = useState<Loc | undefined>(item?.from ?? spendJars[0]?.id);
   const [to, setTo] = useState<Loc>(item?.to ?? 'wallet');
   const [split, setSplit] = useState(item?.split ?? false);
@@ -104,8 +109,37 @@ function Editor({
 
   const amount = evalExpr(expr) ?? 0;
   const dayN = Math.round(Number(day));
-  const dayOk = Number.isFinite(dayN) && dayN >= 1 && dayN <= 31;
-  const start = item?.start ?? dateKey(new Date());
+  const monthN = Math.round(Number(month));
+  const everyN = Math.round(Number(every));
+  const dayOk =
+    freq === 'weekly'
+      ? true
+      : freq === 'days'
+        ? Number.isFinite(everyN) && everyN >= 1 && everyN <= 365 && /^\d{4}-\d{2}-\d{2}$/.test(startDay)
+        : Number.isFinite(dayN) && dayN >= 1 && dayN <= 31 && (freq !== 'yearly' || (monthN >= 1 && monthN <= 12));
+  const schedule = {
+    freq: freq === 'monthly' ? undefined : freq,
+    day: freq === 'weekly' ? weekday : freq === 'days' ? 1 : dayN,
+    ...(freq === 'yearly' ? { month: monthN } : {}),
+    ...(freq === 'days' ? { every: everyN } : {}),
+  };
+  const sameSchedule =
+    !!item &&
+    freqOf(item) === freq &&
+    item.day === schedule.day &&
+    item.month === schedule.month &&
+    item.every === schedule.every &&
+    (freq !== 'days' || item.start === startDay);
+  // A new item starts today (or on the chosen date for "every N days"). A changed schedule must not write the past
+  // again under new ids: it starts after the last line already written. A monthly day change keeps its month keys.
+  const start = (() => {
+    if (!item) return freq === 'days' ? startDay : dateKey(new Date());
+    if (sameSchedule || (freq === 'monthly' && freqOf(item) === 'monthly')) return item.start;
+    const after = afterLastWritten(item, store.state.txs);
+    const today = dateKey(new Date());
+    const floor = after && after > today ? after : today;
+    return freq === 'days' && startDay > floor ? startDay : floor;
+  })();
   const hasRule = ruleTotal(store.state.rule, store.jars) > 0;
 
   const places: { id: Loc; name: string; bg: string; ink: string }[] =
@@ -118,7 +152,8 @@ function Editor({
   const place = type === 'expense' ? from : to;
   const canSave = amount > 0 && note.trim().length > 0 && dayOk && !!place;
 
-  const first = dayOk ? nextDate({ day: dayN, start }, new Date()) : '';
+  const first = dayOk ? nextDate({ ...schedule, start }, new Date()) : '';
+  const label = dayOk ? scheduleLabel({ ...schedule, start }) : '';
 
   const save = () => {
     if (!canSave) return;
@@ -127,7 +162,7 @@ function Editor({
       type,
       amount,
       note: note.trim(),
-      day: dayN,
+      ...schedule,
       start,
       ...(type === 'expense' ? { from } : { to, split: to === 'wallet' && split && hasRule ? true : undefined }),
     };
@@ -192,28 +227,72 @@ function Editor({
 
       <AmountPad expr={expr} onChange={setExpr} shortcuts={[50_000, 100_000, 500_000, 1_000_000]} />
 
-      <label className="field">
-        <span className="label">Ngày trong tháng</span>
-        <input
-          className="input num"
-          type="number"
-          inputMode="numeric"
-          min={1}
-          max={31}
-          value={day}
-          onChange={(e) => setDay(e.target.value)}
-          aria-invalid={!dayOk}
+      <section className="field">
+        <h3 className="label">Lặp lại</h3>
+        <Seg
+          label="Lặp lại"
+          value={freq}
+          onChange={setFreq}
+          options={[
+            { value: 'weekly', label: 'Tuần' },
+            { value: 'monthly', label: 'Tháng' },
+            { value: 'yearly', label: 'Năm' },
+            { value: 'days', label: 'Mỗi N ngày' },
+          ]}
         />
-        <span className="hint">
-          {dayOk
-            ? `${dayN > 28 ? 'Tháng ngắn hơn thì ghi vào ngày cuối tháng. ' : ''}${item ? 'Đổi ngày chỉ áp dụng cho các tháng chưa ghi.' : `Lần đầu ghi: ${vnDate(first)}.`}`
-            : 'Nhập ngày từ 1 đến 31.'}
-        </span>
-      </label>
+      </section>
+
+      {freq === 'weekly' && (
+        <div className="chips" role="radiogroup" aria-label="Thứ trong tuần">
+          {[1, 2, 3, 4, 5, 6, 7].map((d) => (
+            <button key={d} type="button" role="radio" aria-checked={weekday === d} className={`chip ${weekday === d ? 'on' : ''}`} onClick={() => setWeekday(d)}>
+              {d === 7 ? 'CN' : `T${d + 1}`}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {(freq === 'monthly' || freq === 'yearly') && (
+        <div className={freq === 'yearly' ? 'search-dates' : ''}>
+          <label className="field">
+            <span className="label">{freq === 'yearly' ? 'Ngày' : 'Ngày trong tháng'}</span>
+            <input className="input num" type="number" inputMode="numeric" min={1} max={31} value={day} onChange={(e) => setDay(e.target.value)} aria-invalid={!dayOk} />
+          </label>
+          {freq === 'yearly' && (
+            <label className="field">
+              <span className="label">Tháng</span>
+              <input className="input num" type="number" inputMode="numeric" min={1} max={12} value={month} onChange={(e) => setMonth(e.target.value)} aria-invalid={!dayOk} />
+            </label>
+          )}
+        </div>
+      )}
+
+      {freq === 'days' && (
+        <div className="search-dates">
+          <label className="field">
+            <span className="label">Mỗi bao nhiêu ngày</span>
+            <input className="input num" type="number" inputMode="numeric" min={1} max={365} value={every} onChange={(e) => setEvery(e.target.value)} aria-invalid={!dayOk} />
+          </label>
+          <label className="field">
+            <span className="label">Bắt đầu từ</span>
+            <input className="input" type="date" value={startDay} onChange={(e) => setStartDay(e.target.value)} />
+          </label>
+        </div>
+      )}
+
+      <p className="hint">
+        {dayOk
+          ? `${(freq === 'monthly' || freq === 'yearly') && dayN > 28 ? 'Tháng ngắn hơn thì ghi vào ngày cuối tháng. ' : ''}${
+              item && !sameSchedule && !(freq === 'monthly' && freqOf(item) === 'monthly') ? 'Lịch mới áp dụng từ hôm nay, các lần đã ghi giữ nguyên. ' : ''
+            }Lần tới: ${vnDate(first)}${freq === 'weekly' ? ` (${weekdayName(weekday)})` : ''}.`
+          : freq === 'days'
+            ? 'Nhập số ngày từ 1 đến 365.'
+            : 'Nhập ngày từ 1 đến 31 và tháng từ 1 đến 12.'}
+      </p>
 
       <div className="sticky-cta">
         <button className="btn primary block" disabled={!canSave} onClick={save}>
-          {canSave ? `${item ? 'Lưu' : 'Thêm'}: ${fmtD(amount)} ngày ${dayN} hằng tháng` : 'Nhập tên, số tiền và ngày'}
+          {canSave ? `${item ? 'Lưu' : 'Thêm'}: ${fmtD(amount)} · ${label.charAt(0).toLowerCase()}${label.slice(1)}` : 'Nhập tên, số tiền và lịch lặp'}
         </button>
       </div>
 

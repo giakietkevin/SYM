@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { dueTxs, nextDate, occurrenceId, occurrences } from './recurring';
+import { afterLastWritten, dueTxs, nextDate, occurrenceId, occurrences, scheduleLabel } from './recurring';
 import { balanceOf } from './ledger';
 import type { Jar, Recurring, Tx } from './types';
 
@@ -21,6 +21,55 @@ describe('occurrences', () => {
 
   it('keeps at most the last 24 months', () => {
     expect(occurrences({ ...salary, start: '2020-01-01' }, new Date(2026, 10, 1))).toHaveLength(24);
+  });
+});
+
+describe('other schedules', () => {
+  const base = { id: 'x', type: 'expense' as const, amount: 1, note: 'x', start: '2026-01-01' };
+
+  it('weekly falls on the chosen weekday (1 = Monday)', () => {
+    // 1 Jan 2026 is a Thursday: the first Monday on or after it is 5 Jan
+    const list = occurrences({ ...base, freq: 'weekly', day: 1 }, new Date(2026, 0, 20, 12));
+    expect(list.map((o) => o.date)).toEqual(['2026-01-05', '2026-01-12', '2026-01-19']);
+    expect(list[0].key).toBe('2026-01-05');
+  });
+
+  it('yearly uses month and day, the last day of February when short', () => {
+    const r = { ...base, freq: 'yearly' as const, month: 2, day: 29, start: '2026-01-01' };
+    expect(occurrences(r, new Date(2028, 5, 1)).map((o) => o.date)).toEqual(['2026-02-28', '2027-02-28', '2028-02-29']);
+  });
+
+  it('a yearly date already past in the start year begins the next year', () => {
+    expect(nextDate({ ...base, freq: 'yearly', month: 1, day: 1, start: '2026-03-01' }, new Date(2026, 2, 1))).toBe('2027-01-01');
+  });
+
+  it('every N days counts from the start date', () => {
+    const r = { ...base, freq: 'days' as const, every: 10, day: 1, start: '2026-01-25' };
+    expect(occurrences(r, new Date(2026, 1, 15, 12)).map((o) => o.date)).toEqual(['2026-01-25', '2026-02-04', '2026-02-14']);
+  });
+
+  it('monthly ids keep the month key, others use the date', () => {
+    const monthly = dueTxs([{ ...base, day: 3 }], [income(10)], [], undefined, new Date(2026, 0, 5)).txs;
+    const weekly = dueTxs([{ ...base, freq: 'weekly', day: 1 }], [income(10)], [], undefined, new Date(2026, 0, 6)).txs;
+    expect(monthly.map((t) => t.id)).toEqual(['r:x:2026-01']);
+    expect(weekly.map((t) => t.id)).toEqual(['r:x:2026-01-05']);
+  });
+
+  it('labels read naturally', () => {
+    expect(scheduleLabel({ ...base, day: 5 })).toBe('Ngày 5 hằng tháng');
+    expect(scheduleLabel({ ...base, freq: 'weekly', day: 7 })).toBe('Chủ Nhật hằng tuần');
+    expect(scheduleLabel({ ...base, freq: 'yearly', day: 15, month: 3 })).toBe('Ngày 15/3 hằng năm');
+    expect(scheduleLabel({ ...base, freq: 'days', day: 1, every: 10 })).toBe('Mỗi 10 ngày');
+  });
+
+  it('afterLastWritten finds the day after the latest own line, ignoring split lines', () => {
+    const txs: Tx[] = [
+      { id: 'r:x:2026-01-05', ts: new Date(2026, 0, 5, 12).getTime(), type: 'expense', amount: 1, note: '' },
+      { id: 'r:x:2026-01-05:s0', ts: new Date(2026, 0, 9, 12).getTime(), type: 'transfer', amount: 1, note: '' },
+      { id: 'r:y:2026-02-01', ts: new Date(2026, 1, 1, 12).getTime(), type: 'expense', amount: 1, note: '' },
+    ];
+    expect(afterLastWritten({ id: 'x' }, txs)).toBe('2026-01-06');
+    expect(afterLastWritten({ id: 'z' }, txs)).toBeNull();
   });
 });
 

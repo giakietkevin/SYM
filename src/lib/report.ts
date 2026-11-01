@@ -58,8 +58,10 @@ export function monthReport(allTxs: Tx[], jars: Jar[], ym: string, now = new Dat
   const byJar = new Map<string, number>();
   let biggest: MonthReport['biggest'] = null;
 
-  // what a friend pays back for a shared bill comes off the spending it was part of (in the jar it lands in)
-  const refund = (t: Tx) => t.type === 'income' && t.id.startsWith('debt:');
+  // what a friend pays back for a shared bill comes off the spending it was part of (in the jar it lands in).
+  // Only bills: their debts are `<bill>:<n>`, so their payments are `debt:<bill>:<n>` (or `...#<part>`). A loan being
+  // paid back (`debt:<id>`) is money coming home, not a refund of anything spent.
+  const refund = (t: Tx) => t.type === 'income' && /^debt:[^:#]+:\d+(#|$)/.test(t.id);
 
   for (const t of txs) {
     const m = ymOf(t.ts);

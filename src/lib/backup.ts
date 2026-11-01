@@ -77,6 +77,12 @@ function cleanRecurring(x: unknown): Recurring | null {
   const from = x.from === undefined ? undefined : str(x.from, 64);
   const to = x.to === undefined ? undefined : str(x.to, 64);
   if (from === null || to === null) return null;
+  const freq = x.freq === undefined || x.freq === 'monthly' ? undefined : x.freq;
+  if (freq !== undefined && freq !== 'weekly' && freq !== 'yearly' && freq !== 'days') return null;
+  const month = x.month === undefined ? undefined : num(x.month);
+  const every = x.every === undefined ? undefined : num(x.every);
+  if (month === null || every === null || (month !== undefined && (month < 1 || month > 12)) || (every !== undefined && (every < 1 || every > 365))) return null;
+  if (freq === 'weekly' && day > 7) return null;
   return {
     id,
     type: x.type,
@@ -84,6 +90,9 @@ function cleanRecurring(x: unknown): Recurring | null {
     note,
     day: Math.floor(day),
     start: x.start,
+    ...(freq ? { freq } : {}),
+    ...(month !== undefined ? { month: Math.floor(month) } : {}),
+    ...(every !== undefined ? { every: Math.floor(every) } : {}),
     ...(from ? { from } : {}),
     ...(to ? { to } : {}),
     ...(x.split === true ? { split: true } : {}),
@@ -115,6 +124,7 @@ function cleanDebt(x: unknown): Debt | null {
     ...(batch ? { batch } : {}),
     ...(x.settled === true ? { settled: true } : {}),
     ...(settledTx ? { settledTx } : {}),
+    ...(typeof x.due === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(x.due) ? { due: x.due } : {}),
     ...(x.deleted === true ? { deleted: true } : {}),
   };
 }

@@ -1,6 +1,7 @@
 import { useMemo, useReducer } from 'react';
 import { balanceOf, live, mergeStates } from './ledger';
 import { seed } from './seed';
+import { paysDebt } from './debts';
 import type { Debt, Jar, Loc, Recurring, Rule, State, Tx } from './types';
 
 type Action =
@@ -40,10 +41,11 @@ export function reducer(s: State, a: Action): State {
       return { ...s, txs: [...s.txs, a.tx], debts: [...(s.debts ?? []), ...a.debts] };
     case 'undoBill': {
       // the bill, and any repayment already booked against its debts
-      const repaid = new Set((s.debts ?? []).filter((d) => d.batch === a.id).map((d) => `debt:${d.id}`));
+      const mine = (s.debts ?? []).filter((d) => d.batch === a.id);
+      const repaid = (x: Tx) => mine.some((d) => paysDebt(d, x));
       return {
         ...s,
-        txs: s.txs.map((x) => (x.id === a.id || x.batch === a.id || repaid.has(x.id) ? { ...x, deleted: true } : x)),
+        txs: s.txs.map((x) => (x.id === a.id || x.batch === a.id || repaid(x) ? { ...x, deleted: true } : x)),
         debts: (s.debts ?? []).map((d) => (d.batch === a.id ? { ...d, deleted: true } : d)),
       };
     }

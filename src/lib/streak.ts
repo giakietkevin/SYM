@@ -1,12 +1,12 @@
 import { dateKey } from './recurring';
 import { ruleTotal } from './split';
-import { isOpen } from './debts';
+import { isDone, isOpen } from './debts';
 import type { Jar, State, Tx } from './types';
 
 const DAY = 86_400_000;
 
-/** Lines the person wrote themselves: what SYM writes on its own (monthly lines, settlements) never counts towards a streak. */
-const byPerson = (t: Tx) => !t.deleted && !t.id.startsWith('r:') && !t.id.startsWith('debt:');
+/** Lines the person wrote themselves: what SYM writes on its own (monthly lines, settlements, imported statements) never counts towards a streak. */
+const byPerson = (t: Tx) => !t.deleted && !t.id.startsWith('r:') && !t.id.startsWith('debt:') && !t.id.startsWith('imp:');
 
 const dayNumber = (key: string) => {
   const [y, m, d] = key.split('-').map(Number);
@@ -87,7 +87,7 @@ export function badges(state: State, jars: Jar[], bal: Record<string, number>, n
     { id: 'saver', name: 'Người tích lũy', how: 'Bỏ tổng cộng 1.000.000₫ vào các hũ tích lũy', earned: savedIn >= 1_000_000 },
     { id: 'goal', name: 'Hũ đầy', how: 'Đạt mục tiêu của một hũ tích lũy', earned: goal },
     { id: 'clean', name: 'Tháng gọn gàng', how: 'Một tháng ghi chép từ 5 ngày mà không hũ chi tiêu nào lạm hạn mức', earned: clean },
-    { id: 'sharer', name: 'Chia sòng phẳng', how: 'Thanh toán xong một khoản nợ hoặc chia tiền', earned: (state.debts ?? []).some((d) => !d.deleted && d.settled) },
+    { id: 'sharer', name: 'Chia sòng phẳng', how: 'Thanh toán xong một khoản nợ hoặc chia tiền', earned: (state.debts ?? []).some((d) => isDone(d, state.txs)) },
   ];
 }
 

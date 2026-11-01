@@ -4,6 +4,7 @@ import { evalExpr, fmtD } from '../lib/money';
 import type { Store } from '../lib/store';
 import { HUES, WALLET_TINT, type Loc, type Tx } from '../lib/types';
 import { AmountPad } from './AmountPad';
+import { TagChips } from './TagChips';
 import { locName } from './TxRow';
 import { Sheet } from './ui';
 
@@ -98,8 +99,9 @@ export function TxSheet({
 
       <label className="field">
         <span className="label">Ghi chú</span>
-        <input className="input" value={note} onChange={(e) => setNote(e.target.value)} maxLength={80} />
+        <input className="input" value={note} onChange={(e) => setNote(e.target.value)} maxLength={120} />
       </label>
+      <TagChips txs={store.state.txs} note={note} onNote={setNote} />
 
       <label className="field">
         <span className="label">Ngày giờ</span>

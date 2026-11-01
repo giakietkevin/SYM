@@ -17,11 +17,17 @@ import { BubbleMap } from './components/BubbleMap';
 import { AchievementsSheet } from './components/Achievements';
 import { DebtCard, DebtSheet, type BillInput, type LoanInput } from './components/DebtSheet';
 import { ReportSheet } from './components/ReportSheet';
-import { billLines, settleTx } from './lib/debts';
+import { StatsSheet } from './components/StatsSheet';
+import { ImportSheet } from './components/ImportSheet';
+import { billLines, paidOf, partTx, remainingOf, settleTx } from './lib/debts';
 import { goalPlan } from './lib/goal';
 import { badges as computeBadges, streakInfo } from './lib/streak';
 import { computePulse } from './lib/pulse';
 import { TxSheet } from './components/TxSheet';
+import { HistorySearch } from './components/HistorySearch';
+import { RemindersCard } from './components/Reminders';
+import { reminders as computeReminders } from './lib/reminders';
+import { emptyQuery, isActive, searchTxs, type TxQuery } from './lib/search';
 import { TxRow, dayLabel, locName } from './components/TxRow';
 import { Money, Seg } from './components/ui';
 import { chime, haptic, pop, setFeedbackFlags, soft } from './lib/feedback';
@@ -54,6 +60,8 @@ type Sheet =
   | { k: 'recurring' }
   | { k: 'debts' }
   | { k: 'report' }
+  | { k: 'stats' }
+  | { k: 'import' }
   | { k: 'achievements' }
   | null;
 
@@ -103,6 +111,7 @@ function Main({
   const [toast, setToast] = useState<{ text: string; undo?: () => void } | null>(null);
   const [fx, setFx] = useState<Fx[]>([]);
   const [filter, setFilter] = useState<Filter>('all');
+  const [query, setQuery] = useState<TxQuery>(emptyQuery);
   const [view, setViewState] = useState<View>(readView);
   const setView = (v: View) => {
     setViewState(v);
@@ -308,6 +317,8 @@ function Main({
     return null;
   }, [jars, bal, today]); // eslint-disable-line react-hooks/exhaustive-deps
   const goalReached = jars.some((j) => goalPlan(j, bal[j.id] ?? 0)?.state === 'done');
+  // recomputed when the data changes or the app is looked at again (today ticks on focus)
+  const remindList = useMemo(() => computeReminders(state, jars), [state, jars, today]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // a badge is announced once per device; the first look only records what is already earned
   const seenKey = `sym.badges.${user}`;
@@ -382,28 +393,46 @@ function Main({
   /** A bill paid up front: the whole amount leaves the jar now, each friend's share becomes a debt to me. */
   const splitBillNow = (b: BillInput) => {
     const id = uid();
-    const { tx, debts } = billLines({ id, total: b.total, from: b.from, note: b.note, friends: b.friends, includeMe: b.includeMe, now: Date.now() });
+    const { tx, debts } = billLines({ id, total: b.total, from: b.from, note: b.note, friends: b.friends, includeMe: b.includeMe, now: Date.now(), shares: b.shares });
     dispatch({ t: 'addBill', tx, debts });
     pop();
     haptic('success');
     showFx([{ id: b.from, kind: 'out', amount: b.total }]);
-    say(`Đã chia hóa đơn ${fmtD(b.total)}: ${b.friends.length} bạn nợ ${fmtD(debts[0]?.amount ?? 0)} mỗi người`, () => dispatch({ t: 'undoBill', id }));
+    const owed = debts.reduce((s, d) => s + d.amount, 0);
+    const text = b.shares ? `${b.friends.length} bạn nợ tổng ${fmtD(owed)}` : `${b.friends.length} bạn nợ ${fmtD(debts[0]?.amount ?? 0)} mỗi người`;
+    say(`Đã chia hóa đơn ${fmtD(b.total)}: ${text}`, () => dispatch({ t: 'undoBill', id }));
   };
 
   const addLoan = (l: LoanInput) => {
-    const debt: Debt = { id: uid(), who: l.who, dir: l.dir, amount: l.amount, note: l.note, ts: Date.now() };
+    const debt: Debt = { id: uid(), who: l.who, dir: l.dir, amount: l.amount, note: l.note, ts: Date.now(), ...(l.due ? { due: l.due } : {}) };
     dispatch({ t: 'saveDebt', debt });
     soft();
     haptic('success');
     say(l.dir === 'owed' ? `Đã ghi: ${l.who} nợ bạn ${fmtD(l.amount)}` : `Đã ghi: bạn nợ ${l.who} ${fmtD(l.amount)}`, () => dispatch({ t: 'deleteDebt', id: debt.id }));
   };
 
-  const settleDebt = (d: Debt, place: Loc) => {
-    dispatch({ t: 'settleDebt', id: d.id, tx: settleTx(d, place, Date.now()) });
+  /**
+   * The whole debt at once (nothing paid yet) keeps the fixed id `debt:<id>`, so two devices agree. Anything else is a
+   * part with its own id; the last part closes the debt simply because nothing is left.
+   */
+  const settleDebt = (d: Debt, place: Loc, amount: number) => {
+    const left = remainingOf(d, state.txs);
+    const whole = amount >= left && paidOf(d, state.txs) === 0;
+    let undo: () => void;
+    if (whole) {
+      dispatch({ t: 'settleDebt', id: d.id, tx: settleTx(d, place, Date.now()) });
+      undo = () => dispatch({ t: 'unsettleDebt', id: d.id });
+    } else {
+      const tx = partTx(d, Math.min(amount, left), place, Date.now(), uid());
+      dispatch({ t: 'addTx', tx });
+      undo = () => dispatch({ t: 'undoTx', id: tx.id });
+    }
+    const paid = Math.min(amount, left);
     chime();
     haptic('drop');
-    if (d.dir === 'owed' && place !== 'wallet') showFx([{ id: place, kind: 'in', amount: d.amount }]);
-    say(d.dir === 'owed' ? `${d.who} đã trả ${fmtD(d.amount)} vào ${locName(place, state.jars)}` : `Đã trả ${d.who} ${fmtD(d.amount)}`, () => dispatch({ t: 'unsettleDebt', id: d.id }));
+    if (d.dir === 'owed' && place !== 'wallet') showFx([{ id: place, kind: 'in', amount: paid }]);
+    const rest = left - paid > 0 ? `, còn ${fmtD(left - paid)}` : '';
+    say(d.dir === 'owed' ? `${d.who} đã trả ${fmtD(paid)} vào ${locName(place, state.jars)}${rest}` : `Đã trả ${d.who} ${fmtD(paid)}${rest}`, undo);
   };
 
   const removeDebt = (d: Debt) => {
@@ -466,7 +495,7 @@ function Main({
   const detailJar = sheet?.k === 'jar' ? jars.find((j) => j.id === sheet.id) : undefined;
   const editJar = sheet?.k === 'edit' && sheet.id ? jars.find((j) => j.id === sheet.id) : undefined;
 
-  const shown = txs.filter((t) => filter === 'all' || t.type === filter);
+  const shown = searchTxs(txs, query, state.jars).filter((t) => filter === 'all' || t.type === filter);
   const groups: { label: string; items: typeof txs }[] = [];
   for (const t of shown) {
     const label = dayLabel(t.ts, now);
@@ -626,6 +655,12 @@ function Main({
               </div>
             </section>
 
+            <RemindersCard
+              user={user}
+              items={remindList}
+              onOpen={(r) => setSheet(r.kind === 'debt' ? { k: 'debts' } : r.kind === 'recurring' ? { k: 'recurring' } : { k: 'quick' })}
+            />
+
             <section
               className={`wallet ${drag?.over === 'wallet' ? 'is-over' : ''}`}
               data-drop="wallet"
@@ -660,17 +695,22 @@ function Main({
 
             {pulse.hasActivity && <PulseCard pulse={pulse} onOpen={() => setSheet({ k: 'pulse' })} />}
 
-            {jars.length > 0 && <DebtCard debts={state.debts} onOpen={() => setSheet({ k: 'debts' })} />}
+            {jars.length > 0 && <DebtCard debts={state.debts} txs={state.txs} onOpen={() => setSheet({ k: 'debts' })} />}
 
             {txs.length > 0 && (
-              <section className="report-link" aria-label="Báo cáo tháng">
+              <section className="report-link" aria-label="Báo cáo và thống kê">
                 <div>
-                  <h2 className="sec">Báo cáo tháng {now.getMonth() + 1}</h2>
-                  <p className="hint">Xem tổng kết và chia sẻ thành một tấm ảnh.</p>
+                  <h2 className="sec">Báo cáo & thống kê</h2>
+                  <p className="hint">Tổng kết tháng {now.getMonth() + 1}, xu hướng nhiều tháng và cả năm.</p>
                 </div>
-                <button className="btn" onClick={() => setSheet({ k: 'report' })}>
-                  Xem
-                </button>
+                <div className="row">
+                  <button className="btn" onClick={() => setSheet({ k: 'report' })}>
+                    Tháng
+                  </button>
+                  <button className="btn" onClick={() => setSheet({ k: 'stats' })}>
+                    Thống kê
+                  </button>
+                </div>
               </section>
             )}
 
@@ -691,6 +731,7 @@ function Main({
           </div>
         ) : (
           <div className="history">
+            <HistorySearch query={query} onChange={setQuery} shown={shown} all={txs} />
             <div className="chips" role="group" aria-label="Lọc giao dịch">
               {(
                 [
@@ -713,7 +754,7 @@ function Main({
                 </section>
               ))
             ) : (
-              <p className="empty">Không có giao dịch nào trong mục này.</p>
+              <p className="empty">{isActive(query) ? 'Không tìm thấy giao dịch nào khớp.' : 'Không có giao dịch nào trong mục này.'}</p>
             )}
           </div>
         )}
@@ -783,6 +824,20 @@ function Main({
         <DebtSheet store={store} onBill={splitBillNow} onLoan={addLoan} onSettle={settleDebt} onDelete={removeDebt} onClose={() => setSheet(null)} />
       )}
       {sheet?.k === 'report' && <ReportSheet store={store} name={profile.fullName || profile.username} onClose={() => setSheet(null)} onSay={(t) => say(t)} />}
+      {sheet?.k === 'stats' && <StatsSheet store={store} onClose={() => setSheet(null)} />}
+      {sheet?.k === 'import' && (
+        <ImportSheet
+          store={store}
+          onImport={(lines) => {
+            dispatch({ t: 'addTxs', txs: lines });
+            chime();
+            haptic('success');
+            setSheet(null);
+            say(`Đã nhập ${lines.length} giao dịch từ sao kê`, () => dispatch({ t: 'setDeleted', ids: lines.map((l) => l.id), deleted: true }));
+          }}
+          onClose={() => setSheet(null)}
+        />
+      )}
       {sheet?.k === 'achievements' && <AchievementsSheet streak={streak} badges={badgeList} onClose={() => setSheet(null)} />}
       {sheet?.k === 'recurring' && (
         <RecurringSheet
@@ -839,12 +894,13 @@ function Main({
           onSplit={() => setSheet({ k: 'split' })}
           recurringSummary={(() => {
             const n = (state.recurring ?? []).filter((r) => !r.deleted).length;
-            return n ? `${n} khoản tự ghi mỗi tháng.` : 'Tiền trọ, Netflix, lương… tự ghi mỗi tháng.';
+            return n ? `${n} khoản tự ghi theo lịch.` : 'Tiền trọ, Netflix, lương… tự ghi theo lịch.';
           })()}
           onRecurring={() => setSheet({ k: 'recurring' })}
           onExportJson={exportJson}
           onExportCsv={exportCsv}
           onImport={importBackup}
+          onStatement={() => setSheet({ k: 'import' })}
           themePref={themePref}
           onTheme={onTheme}
           username={user}
