@@ -1,9 +1,19 @@
 {
+  "id": "/",
   "name": "SYM – Save your money",
   "short_name": "SYM",
+  "description": "Chia tiền vào các hũ, ghi chi tiêu dưới 5 giây và nhìn hũ lớn lên mỗi ngày.",
+  "lang": "vi",
   "start_url": "/",
+  "scope": "/",
   "display": "standalone",
+  "orientation": "portrait",
   "background_color": "#f2f4f1",
   "theme_color": "#f2f4f1",
-  "icons": [{ "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml" }]
+  "icons": [
+    { "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml" },
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
 }

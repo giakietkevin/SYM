@@ -5,7 +5,7 @@ import { formatPhone, initials } from '../lib/validate';
 import { ContactFields, contactErrors, type Contact, type ContactErrors } from './ContactFields';
 import { Logo } from './icons';
 import { Mascot } from './Mascot';
-import { SecurityCard } from './Security';
+import { DeleteAccountCard, SecurityCard, SessionsCard } from './Security';
 
 export function Avatar({ profile, size = 40 }: { profile: Pick<Profile, 'fullName' | 'username' | 'avatar'>; size?: number }) {
   return (
@@ -81,7 +81,7 @@ export function CompleteProfile({
 }
 
 /** The profile page: the name can change, the login name, email and phone are shown but locked. */
-export function ProfileScreen({ profile, onSaved }: { profile: Profile; onSaved: (p: Profile) => void }) {
+export function ProfileScreen({ profile, onSaved, onDeleted }: { profile: Profile; onSaved: (p: Profile) => void; onDeleted: () => void }) {
   const [name, setName] = useState(profile.fullName);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -194,6 +194,8 @@ export function ProfileScreen({ profile, onSaved }: { profile: Profile; onSaved:
       </form>
 
       <SecurityCard profile={profile} onProfile={onSaved} />
+      <SessionsCard />
+      <DeleteAccountCard profile={profile} onDeleted={onDeleted} />
     </div>
   );
 }

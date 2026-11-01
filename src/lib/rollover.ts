@@ -34,7 +34,7 @@ export function planRefill(jars: Jar[], bal: Record<string, number>, wallet: num
     const mode = modes[jar.id] ?? 'top';
     const surplus = mode === 'top' && before > jar.goal ? before - jar.goal : 0;
     const need = mode === 'skip' ? 0 : mode === 'add' ? jar.goal : Math.max(0, jar.goal - before);
-    return { jar, mode, before, need, move: -surplus, after: before - surplus, short: false };
+    return { jar, mode, before, need, move: surplus ? -surplus : 0, after: before - surplus, short: false };
   });
 
   let avail = wallet + steps.reduce((s, x) => s - x.move, 0);

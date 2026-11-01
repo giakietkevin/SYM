@@ -5,6 +5,7 @@ Jar-based spending and saving app (Phase 1 MVP of the PRD). Mobile-first PWA wit
 ```bash
 npm install
 npm run dev      # API on :8787 + web on :5173 (open http://localhost:5173, or the LAN address on a phone)
+npm test         # unit tests for src/lib (Vitest)
 ```
 
 Production:
@@ -22,10 +23,12 @@ Put it behind HTTPS in production and set `SYM_SECURE=1` (or send `X-Forwarded-P
 - **Password**: changed on the profile page (needs the current password; every other device is signed out). There is no email service, so a forgotten password is recovered with a **recovery code** (`XXXX-XXXX-XXXX-XXXX`, 80 bits) shown once at sign-up. "Quên mật khẩu?" takes username or email + code + new password, signs the person in and issues a new code (a code works once). Only a sha256 of the code is stored. Accounts made before codes existed create theirs from the profile page. Guesses are throttled per address and name.
 - **Profile picture**: chosen on the profile page, cropped to a centred 256px square JPEG in the browser (which also drops photo metadata) and stored as a small data URL on the account. The server accepts only a JPEG, checked by its bytes. The header shows "Xin chào + name" with the picture (or initials).
 - Accounts created before profiles existed are asked for email and phone once, on a "complete your profile" screen, then locked like the rest. Their data is untouched.
-- There is still **no password recovery** (the email is collected but nothing is sent yet).
+- The email is collected but nothing is sent yet (no email verification).
 - Passwords are stored only as salted scrypt hashes. Sessions are random tokens in an HttpOnly, SameSite cookie (30 days), stored hashed. Login is rate limited, cross-site writes are refused (Origin check).
 - Each user's data is one JSON document. Every save carries the revision it was based on; if another device saved first, the two are **merged** (the ledger only grows and every line has a unique id), nothing is overwritten. Deleted and undone lines are kept as tombstones, so a merge from a stale device cannot bring them back.
 - Logging out removes the local copy from that device.
+- **Signed-in devices** (profile page): every session with its browser and system, when it signed in and when it was last active (updated at most every 5 minutes). Any other device can be signed out, one by one or all at once. A session is listed by the first 16 hex of its stored hash, which cannot be used to sign in.
+- **Delete account** (profile page): needs the password and the username typed out. The account, its data and every session are removed from the server for good (`ON DELETE CASCADE`); the device then signs out and clears its local copy.
 - Old data from before accounts existed (`sym.v1` in the browser) is not imported into any account.
 
 ## What is in Phase 1
@@ -52,5 +55,9 @@ Put it behind HTTPS in production and set `SYM_SECURE=1` (or send `X-Forwarded-P
 ## Data model
 No balance is stored. Balances are derived from the ledger (`src/lib/types.ts`, `src/lib/store.ts`): each line moves money from/to the wallet or a jar, so the numbers cannot drift apart.
 
+## Installable and offline
+- The production build emits `sw.js` (source `sw/sw.js`, file list and version filled in by the plugin in `vite.config.ts`). It caches the app shell at install, so the app opens with no connection and then uses the data cached on the device. `/api` is never cached. Pages are network-first (4 s timeout, then the cached shell); hashed build files are cache-first. A new version takes over once every SYM tab is closed. The worker is registered in production only.
+- Icons: `public/icons/` (192, 512, maskable 512) and `public/apple-touch-icon.png` (180, for iOS).
+
 ## Not yet built (PRD phases 2 and 3)
-Bubble chart, recurring items, biometrics, OCR, shared jars, password change/recovery (and email verification). To ship as a native app, wrap with Capacitor to get true haptics.
+Biometrics, OCR, shared jars, email verification and recovery by email. To ship as a native app, wrap with Capacitor to get true haptics.

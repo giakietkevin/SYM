@@ -542,7 +542,7 @@ function Main({
         </header>
 
         {screen === 'profile' ? (
-          <ProfileScreen profile={profile} onSaved={onProfile} />
+          <ProfileScreen profile={profile} onSaved={onProfile} onDeleted={onLogout} />
         ) : screen === 'home' ? (
           <div className="home">
             {needsRefill && (

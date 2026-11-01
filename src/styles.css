@@ -1937,6 +1937,53 @@ button {
   margin: 0;
 }
 
+/* ───────── signed-in devices, delete account ───────── */
+
+.sessions {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+}
+.session {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 0;
+  border-top: 1px solid var(--border);
+}
+.session:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+.session-who {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.session-name {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+}
+.session-tag {
+  font-size: 12px;
+  font-weight: 500;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--raised);
+  color: var(--muted);
+}
+.session .btn {
+  flex-shrink: 0;
+}
+.danger-card {
+  border-color: color-mix(in srgb, var(--negative) 35%, var(--border));
+}
+
 .row.wrap {
   flex-wrap: wrap;
 }

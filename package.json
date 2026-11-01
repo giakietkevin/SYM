@@ -8,7 +8,9 @@
     "dev:web": "vite",
     "dev:api": "node --no-warnings --watch server/index.mjs",
     "build": "tsc --noEmit && vite build",
-    "start": "node --no-warnings server/index.mjs"
+    "start": "node --no-warnings server/index.mjs",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "react": "^18.3.1",
@@ -19,6 +21,7 @@
     "@types/react-dom": "^18.3.0",
     "@vitejs/plugin-react": "^4.7.0",
     "typescript": "^5.5.4",
-    "vite": "^7.3.7"
+    "vite": "^7.3.7",
+    "vitest": "^4.1.12"
   }
 }

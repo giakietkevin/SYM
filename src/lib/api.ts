@@ -59,6 +59,17 @@ export interface Registration {
   phone: string;
 }
 
+/** One device signed in to the account. `id` is a short public handle, never the login token. */
+export interface Session {
+  id: string;
+  current: boolean;
+  /** ms, null for sessions made before the device list existed */
+  created: number | null;
+  seen: number | null;
+  /** the browser's user agent, as sent at sign-in */
+  agent: string;
+}
+
 export const api = {
   me: () => call<Profile>('/api/me'),
   register: (r: Registration) => call<WithCode>('/api/register', 'POST', r),
@@ -73,6 +84,11 @@ export const api = {
   /** a data URL from avatarFromFile, or null to remove the picture */
   setAvatar: (image: string | null) => call<Profile>('/api/avatar', 'PUT', { image }),
   logout: () => call<{ ok: true }>('/api/logout', 'POST', {}),
+  sessions: () => call<{ sessions: Session[] }>('/api/sessions'),
+  revokeSession: (id: string) => call<{ ok: true }>('/api/sessions/revoke', 'POST', { id }),
+  revokeOthers: () => call<{ ok: true }>('/api/sessions/revoke-others', 'POST', {}),
+  /** deletes the account and all its data on the server; `confirm` is the username typed out */
+  deleteAccount: (password: string, confirm: string) => call<{ ok: true }>('/api/account/delete', 'POST', { password, confirm }),
   getData: () => call<Remote>('/api/data'),
   putData: (state: State, rev: number) => call<{ rev: number }>('/api/data', 'PUT', { state, rev }),
 };

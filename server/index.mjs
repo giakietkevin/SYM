@@ -47,6 +47,11 @@ const userCols = db.prepare('PRAGMA table_info(users)').all().map((c) => c.name)
 for (const col of ['full_name', 'email', 'phone', 'recovery', 'avatar']) if (!userCols.includes(col)) db.exec(`ALTER TABLE users ADD COLUMN ${col} TEXT`);
 // one email, one account (NULLs, i.e. old accounts not yet completed, do not collide)
 db.exec('CREATE UNIQUE INDEX IF NOT EXISTS users_email ON users(email)');
+// sessions from before the device list existed show up as "unknown device", first seen at sign-in time unknown (0)
+const sessionCols = db.prepare('PRAGMA table_info(sessions)').all().map((c) => c.name);
+for (const [col, type] of [['created', 'INTEGER'], ['seen', 'INTEGER'], ['agent', 'TEXT']]) {
+  if (!sessionCols.includes(col)) db.exec(`ALTER TABLE sessions ADD COLUMN ${col} ${type}`);
+}
 
 const q = {
   userByName: db.prepare('SELECT * FROM users WHERE username = ?'),
@@ -61,10 +66,15 @@ const q = {
   setName: db.prepare('UPDATE users SET full_name = ? WHERE id = ?'),
   // email and phone are set once: only while both are still empty
   setContact: db.prepare('UPDATE users SET email = ?, phone = ? WHERE id = ? AND email IS NULL AND phone IS NULL'),
-  insertSession: db.prepare('INSERT INTO sessions (token_hash, user_id, expires) VALUES (?, ?, ?)'),
+  insertSession: db.prepare('INSERT INTO sessions (token_hash, user_id, expires, created, seen, agent) VALUES (?, ?, ?, ?, ?, ?)'),
   sessionUser: db.prepare(
-    'SELECT users.id AS id, users.username AS username FROM sessions JOIN users ON users.id = sessions.user_id WHERE token_hash = ? AND expires > ?',
+    'SELECT users.id AS id, users.username AS username, sessions.token_hash AS token, sessions.seen AS seen FROM sessions JOIN users ON users.id = sessions.user_id WHERE token_hash = ? AND expires > ?',
   ),
+  touchSession: db.prepare('UPDATE sessions SET seen = ? WHERE token_hash = ?'),
+  listSessions: db.prepare('SELECT token_hash, created, seen, agent FROM sessions WHERE user_id = ? AND expires > ? ORDER BY seen DESC'),
+  // the public id of a session is the first 16 hex of its stored hash: enough to pick it, useless as a login
+  revokeSession: db.prepare('DELETE FROM sessions WHERE user_id = ? AND substr(token_hash, 1, 16) = ? AND token_hash <> ?'),
+  deleteUser: db.prepare('DELETE FROM users WHERE id = ?'),
   deleteSession: db.prepare('DELETE FROM sessions WHERE token_hash = ?'),
   purgeSessions: db.prepare('DELETE FROM sessions WHERE expires <= ?'),
   getData: db.prepare('SELECT json, rev FROM data WHERE user_id = ?'),
@@ -138,15 +148,23 @@ function sessionCookie(req, token, maxAgeSec) {
 function startSession(req, res, user, extra = {}) {
   const token = randomBytes(32).toString('base64url');
   q.purgeSessions.run(Date.now());
-  q.insertSession.run(sha(token), user.id, Date.now() + SESSION_DAYS * 86400_000);
+  const now = Date.now();
+  q.insertSession.run(sha(token), user.id, now + SESSION_DAYS * 86400_000, now, now, String(req.headers['user-agent'] ?? '').slice(0, 300));
   send(res, 200, { ...profileOf(user), ...extra }, { 'Set-Cookie': sessionCookie(req, token, SESSION_DAYS * 86400) });
 }
 
 function currentUser(req) {
   const token = cookies(req).sym_session;
   if (!token) return null;
-  return q.sessionUser.get(sha(token), Date.now()) ?? null;
+  const now = Date.now();
+  const u = q.sessionUser.get(sha(token), now);
+  if (!u) return null;
+  // "last active" for the device list; written at most every 5 minutes, not on every save
+  if (!u.seen || now - u.seen > 5 * 60_000) q.touchSession.run(now, u.token);
+  return u;
 }
+
+const SESSION_ID = /^[0-9a-f]{16}$/;
 
 function requireUser(req) {
   const u = currentUser(req);
@@ -437,6 +455,52 @@ async function api(req, res, path) {
       }
     }
     return send(res, 200, profileOf(q.userById.get(user.id)));
+  }
+
+  // the devices signed in to this account
+  if (method === 'GET' && path === '/api/sessions') {
+    const u = requireUser(req);
+    const list = q.listSessions.all(u.id, Date.now()).map((s) => ({
+      id: s.token_hash.slice(0, 16),
+      current: s.token_hash === u.token,
+      created: s.created ?? null,
+      seen: s.seen ?? null,
+      agent: s.agent ?? '',
+    }));
+    return send(res, 200, { sessions: list });
+  }
+
+  // sign one other device out (this one signs out with /api/logout)
+  if (method === 'POST' && path === '/api/sessions/revoke') {
+    const u = requireUser(req);
+    const body = await readJson(req);
+    const id = String(body.id ?? '');
+    if (!SESSION_ID.test(id)) throw new HttpError(400, 'Phiên không hợp lệ');
+    q.revokeSession.run(u.id, id, u.token);
+    return send(res, 200, { ok: true });
+  }
+
+  if (method === 'POST' && path === '/api/sessions/revoke-others') {
+    const u = requireUser(req);
+    q.otherSessions.run(u.id, u.token);
+    return send(res, 200, { ok: true });
+  }
+
+  // delete the account and everything in it: needs the password and the username typed out
+  if (method === 'POST' && path === '/api/account/delete') {
+    const session = requireUser(req);
+    const body = await readJson(req);
+    const key = `del|${session.id}`;
+    const fail = throttle(key, 5, 10 * 60_000);
+    const user = q.userById.get(session.id);
+    if (String(body.confirm ?? '').trim().toLowerCase() !== user.username) throw new HttpError(400, 'Tên đăng nhập nhập lại chưa đúng');
+    if (!timingSafeEqual(await hashPassword(String(body.password ?? '').slice(0, 128), user.salt), user.hash)) {
+      fail();
+      throw new HttpError(403, 'Mật khẩu không đúng');
+    }
+    hits.delete(key);
+    q.deleteUser.run(user.id); // sessions and data go with it (ON DELETE CASCADE)
+    return send(res, 200, { ok: true }, { 'Set-Cookie': sessionCookie(req, '', 0) });
   }
 
   if (method === 'GET' && path === '/api/data') {
