@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from 'react';
 import { ApiError, type Registration } from '../lib/api';
+import { isCancel, passkeySupport } from '../lib/passkey';
 import { ContactFields, contactErrors, type Contact, type ContactErrors } from './ContactFields';
 import { Logo } from './icons';
 import { Mascot } from './Mascot';
@@ -11,8 +12,11 @@ export function AuthScreen({
   notice,
   onSubmit,
   onReset,
+  onPasskey,
 }: {
   notice?: string;
+  /** sign in with a passkey saved on this device */
+  onPasskey: () => Promise<void>;
   /** forgotten password: username or email, recovery code, new password */
   onReset: (identifier: string, code: string, password: string) => Promise<void>;
   /** login: only username (or email) and password are used */
@@ -30,6 +34,19 @@ export function AuthScreen({
   const [error, setError] = useState('');
 
   const register = mode === 'register';
+  const canPasskey = passkeySupport() === 'ok';
+
+  const passkey = async () => {
+    if (busy) return;
+    setError('');
+    setBusy(true);
+    try {
+      await onPasskey();
+    } catch (err) {
+      if (!isCancel(err)) setError(err instanceof Error ? err.message : 'Không đăng nhập được bằng passkey');
+      setBusy(false);
+    }
+  };
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
@@ -154,6 +171,22 @@ export function AuthScreen({
           <button className="btn primary block" disabled={busy || !username || !password || (forgot && !code)}>
             {busy ? 'Đang xử lý…' : forgot ? 'Đặt lại mật khẩu' : register ? 'Tạo tài khoản' : 'Đăng nhập'}
           </button>
+          {!register && !forgot && canPasskey && (
+            <>
+              <div className="or" aria-hidden="true">
+                <span>hoặc</span>
+              </div>
+              <button type="button" className="btn block passkey-btn" onClick={passkey} disabled={busy}>
+                <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+                  <circle cx="9" cy="8" r="4" />
+                  <path d="M2 21c0-3.9 3.1-7 7-7 1.4 0 2.6.4 3.7 1" />
+                  <circle cx="17.5" cy="14.5" r="2.5" />
+                  <path d="M17.5 17v4.5M17.5 19.5h2" />
+                </svg>
+                Đăng nhập bằng passkey
+              </button>
+            </>
+          )}
           {!register && (
             <button
               type="button"

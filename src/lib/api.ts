@@ -70,6 +70,30 @@ export interface Session {
   agent: string;
 }
 
+export interface Passkey {
+  /** the credential id (base64url) */
+  id: string;
+  name: string;
+  created: number;
+  lastUsed: number | null;
+}
+
+/** What the server needs to build navigator.credentials.create() options (binary fields base64url). */
+export interface PasskeyRegisterOptions {
+  challenge: string;
+  rp: { name: string; id: string };
+  user: { id: string; name: string; displayName: string };
+  pubKeyCredParams: { type: 'public-key'; alg: number }[];
+  authenticatorSelection: AuthenticatorSelectionCriteria;
+  excludeCredentials: { type: 'public-key'; id: string }[];
+  timeout: number;
+}
+
+export interface PasskeyCredentialJSON {
+  id: string;
+  response: Record<string, string | null>;
+}
+
 export const api = {
   me: () => call<Profile>('/api/me'),
   register: (r: Registration) => call<WithCode>('/api/register', 'POST', r),
@@ -84,6 +108,12 @@ export const api = {
   /** a data URL from avatarFromFile, or null to remove the picture */
   setAvatar: (image: string | null) => call<Profile>('/api/avatar', 'PUT', { image }),
   logout: () => call<{ ok: true }>('/api/logout', 'POST', {}),
+  passkeys: () => call<{ passkeys: Passkey[] }>('/api/passkeys'),
+  passkeyRegisterOptions: (password: string) => call<PasskeyRegisterOptions>('/api/passkey/register/options', 'POST', { password }),
+  passkeyRegister: (credential: PasskeyCredentialJSON, name: string) => call<{ passkeys: Passkey[] }>('/api/passkey/register', 'POST', { credential, name }),
+  deletePasskey: (id: string) => call<{ passkeys: Passkey[] }>('/api/passkey/delete', 'POST', { id }),
+  passkeyLoginOptions: () => call<{ challenge: string; rpId: string; timeout: number }>('/api/passkey/login/options', 'POST', {}),
+  passkeyLogin: (credential: PasskeyCredentialJSON) => call<Profile>('/api/passkey/login', 'POST', { credential }),
   sessions: () => call<{ sessions: Session[] }>('/api/sessions'),
   revokeSession: (id: string) => call<{ ok: true }>('/api/sessions/revoke', 'POST', { id }),
   revokeOthers: () => call<{ ok: true }>('/api/sessions/revoke-others', 'POST', {}),

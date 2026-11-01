@@ -5,7 +5,7 @@ import { formatPhone, initials } from '../lib/validate';
 import { ContactFields, contactErrors, type Contact, type ContactErrors } from './ContactFields';
 import { Logo } from './icons';
 import { Mascot } from './Mascot';
-import { DeleteAccountCard, SecurityCard, SessionsCard } from './Security';
+import { DeleteAccountCard, PasskeysCard, SecurityCard, SessionsCard } from './Security';
 
 export function Avatar({ profile, size = 40 }: { profile: Pick<Profile, 'fullName' | 'username' | 'avatar'>; size?: number }) {
   return (
@@ -194,6 +194,7 @@ export function ProfileScreen({ profile, onSaved, onDeleted }: { profile: Profil
       </form>
 
       <SecurityCard profile={profile} onProfile={onSaved} />
+      <PasskeysCard />
       <SessionsCard />
       <DeleteAccountCard profile={profile} onDeleted={onDeleted} />
     </div>

@@ -48,6 +48,6 @@ export default defineConfig({
     watch: { ignored: ['**/server/data/**', '**/.taste-skill/**'] },
   },
   test: {
-    include: ['src/**/*.test.ts'],
+    include: ['src/**/*.test.ts', 'server/**/*.test.mjs'],
   },
 });

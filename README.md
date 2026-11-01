@@ -15,7 +15,7 @@ npm run build
 HOST=0.0.0.0 PORT=8787 npm start     # serves the API and the built app together
 ```
 
-Put it behind HTTPS in production and set `SYM_SECURE=1` (or send `X-Forwarded-Proto: https`) so the session cookie is `Secure`. Back up `server/data/sym.db` (the SQLite file, override with `SYM_DB`).
+Put it behind HTTPS in production and set `SYM_SECURE=1` (or send `X-Forwarded-Proto: https`) so the session cookie is `Secure`. Passkeys use this host as the relying party; behind a proxy that changes the Host header, set `SYM_RP_ID` (the domain, e.g. `sym.example.com`) and `SYM_ORIGIN` (`https://sym.example.com`). Back up `server/data/sym.db` (the SQLite file, override with `SYM_DB`).
 
 ## Accounts and storage
 - Sign-up takes a full name (optional), an **email and a phone number (both required)**, a username (3–24 chars: `a-z 0-9 . _ -`) and a password (8–128 chars). You can sign in with the username or the email.
@@ -27,6 +27,7 @@ Put it behind HTTPS in production and set `SYM_SECURE=1` (or send `X-Forwarded-P
 - Passwords are stored only as salted scrypt hashes. Sessions are random tokens in an HttpOnly, SameSite cookie (30 days), stored hashed. Login is rate limited, cross-site writes are refused (Origin check).
 - Each user's data is one JSON document. Every save carries the revision it was based on; if another device saved first, the two are **merged** (the ledger only grows and every line has a unique id), nothing is overwritten. Deleted and undone lines are kept as tombstones, so a merge from a stale device cannot bring them back.
 - Logging out removes the local copy from that device.
+- **Passkeys** (profile page, and "Đăng nhập bằng passkey" on the sign-in screen): sign in with the device's fingerprint, face or PIN, no username or password. Adding one asks for the password again, so a borrowed session cannot plant a passkey. Up to 10 per account, each listed with when it was added and last used, and removable. Verification is done on the server with `node:crypto` and a small CBOR reader (`server/webauthn.mjs`): ES256, Ed25519 and RS256 keys, user verification required, attestation `none`, one-use challenges that expire after 5 minutes, and a signature counter that refuses a cloned key. Passkeys need HTTPS (or `http://localhost`), so they do not work over a plain LAN address. A password reset keeps the account's passkeys; remove any you do not recognise.
 - **Signed-in devices** (profile page): every session with its browser and system, when it signed in and when it was last active (updated at most every 5 minutes). Any other device can be signed out, one by one or all at once. A session is listed by the first 16 hex of its stored hash, which cannot be used to sign in.
 - **Delete account** (profile page): needs the password and the username typed out. The account, its data and every session are removed from the server for good (`ON DELETE CASCADE`); the device then signs out and clears its local copy.
 - Old data from before accounts existed (`sym.v1` in the browser) is not imported into any account.
@@ -64,4 +65,4 @@ No balance is stored. Balances are derived from the ledger (`src/lib/types.ts`, 
 - Icons: `public/icons/` (192, 512, maskable 512) and `public/apple-touch-icon.png` (180, for iOS).
 
 ## Not yet built (PRD phases 2 and 3)
-Biometrics, OCR, shared jars, email verification and recovery by email. To ship as a native app, wrap with Capacitor to get true haptics.
+OCR, shared jars, email verification and recovery by email. To ship as a native app, wrap with Capacitor to get true haptics.

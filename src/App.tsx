@@ -44,6 +44,7 @@ import type { Profile } from './lib/api';
 import { Avatar, CompleteProfile, ProfileScreen } from './components/Profile';
 import { AuthScreen } from './components/AuthScreen';
 import { RecoveryScreen } from './components/Recovery';
+import { signInWithPasskey } from './lib/passkey';
 import { useTheme, type Theme, type ThemePref } from './lib/theme';
 import type { Debt, Loc, Rule, State, Tx } from './lib/types';
 
@@ -988,6 +989,7 @@ export function App() {
           if (recoveryCode) setAuth({ s: 'code', profile: { ...profile, hasRecovery: true }, code: recoveryCode, reason: 'new' });
           else await enter(profile);
         }}
+        onPasskey={async () => enter(await signInWithPasskey())}
         onReset={async (identifier, code, password) => {
           const { recoveryCode, ...profile } = await api.reset(identifier, code, password);
           if (recoveryCode) setAuth({ s: 'code', profile: { ...profile, hasRecovery: true }, code: recoveryCode, reason: 'reset' });

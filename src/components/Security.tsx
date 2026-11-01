@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
-import { ApiError, api, type Profile, type Session } from '../lib/api';
+import { ApiError, api, type Passkey, type Profile, type Session } from '../lib/api';
+import { addPasskey, isCancel, passkeySupport } from '../lib/passkey';
 import { ago, deviceLabel } from '../lib/device';
 import { CodeBox } from './Recovery';
 
@@ -272,6 +273,113 @@ export function DeleteAccountCard({ profile, onDeleted }: { profile: Profile; on
       ) : (
         <button type="button" className="btn text negative" onClick={() => setOpen(true)}>
           Xóa tài khoản…
+        </button>
+      )}
+    </section>
+  );
+}
+
+/** Passkeys: sign in with the fingerprint, face or PIN of a device instead of the password. */
+export function PasskeysCard() {
+  const support = passkeySupport();
+  const [list, setList] = useState<Passkey[] | null>(null);
+  const [error, setError] = useState('');
+  const [adding, setAdding] = useState(false);
+  const [password, setPassword] = useState('');
+  const [busy, setBusy] = useState('');
+  const [done, setDone] = useState('');
+
+  useEffect(() => {
+    api
+      .passkeys()
+      .then((r) => setList(r.passkeys))
+      .catch((err) => setError(netError(err, 'Cần có mạng để xem passkey')));
+  }, []);
+
+  const add = async (e: FormEvent) => {
+    e.preventDefault();
+    if (busy || !password) return;
+    setBusy('add');
+    setError('');
+    setDone('');
+    const name = deviceLabel(navigator.userAgent);
+    try {
+      const r = await addPasskey(password, name);
+      setList(r.passkeys);
+      setAdding(false);
+      setPassword('');
+      setDone(`Đã thêm passkey cho ${name}. Lần sau bấm "Đăng nhập bằng passkey" là vào được.`);
+    } catch (err) {
+      if (!isCancel(err)) setError(netError(err, 'Cần có mạng để thêm passkey'));
+    }
+    setBusy('');
+  };
+
+  const remove = async (id: string) => {
+    if (busy) return;
+    setBusy(id);
+    setError('');
+    setDone('');
+    try {
+      setList((await api.deletePasskey(id)).passkeys);
+    } catch (err) {
+      setError(netError(err, 'Cần có mạng để xóa passkey'));
+    }
+    setBusy('');
+  };
+
+  return (
+    <section className="profile-card" aria-labelledby="h-pk">
+      <h2 id="h-pk" className="card-title">
+        Passkey
+      </h2>
+      <p className="hint">Đăng nhập bằng vân tay, khuôn mặt hoặc mã PIN của thiết bị, không cần gõ mật khẩu. Passkey nằm trên thiết bị của bạn, SYM chỉ giữ khoá công khai.</p>
+      {list && list.length > 0 && (
+        <ul className="sessions">
+          {list.map((p) => (
+            <li key={p.id} className="session">
+              <div className="session-who">
+                <span className="session-name">{p.name}</span>
+                <span className="hint">
+                  Thêm ngày {new Date(p.created).toLocaleDateString('vi-VN')}
+                  {p.lastUsed ? ` · dùng lần cuối ${ago(p.lastUsed)}` : ' · chưa dùng lần nào'}
+                </span>
+              </div>
+              <button type="button" className="btn text negative" disabled={!!busy} onClick={() => remove(p.id)} aria-label={`Xóa passkey ${p.name}`}>
+                {busy === p.id ? 'Đang xóa…' : 'Xóa'}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      {list && list.length === 0 && <p className="hint">Chưa có passkey nào.</p>}
+      {done && (
+        <p className="ok" role="status">
+          {done}
+        </p>
+      )}
+      {error && (
+        <p className="error" role="alert">
+          {error}
+        </p>
+      )}
+      {support !== 'ok' ? (
+        <p className="hint">{support === 'insecure' ? 'Passkey chỉ dùng được khi mở SYM qua HTTPS.' : 'Trình duyệt này chưa hỗ trợ passkey.'}</p>
+      ) : adding ? (
+        <form className="stack" onSubmit={add}>
+          <Password label="Nhập mật khẩu để thêm passkey" value={password} onChange={setPassword} auto="current-password" />
+          <div className="row">
+            <button type="button" className="btn" onClick={() => (setAdding(false), setPassword(''), setError(''))}>
+              Hủy
+            </button>
+            <button className="btn primary" disabled={!!busy || !password}>
+              {busy === 'add' ? 'Đang chờ thiết bị…' : 'Tiếp tục'}
+            </button>
+          </div>
+        </form>
+      ) : (
+        <button type="button" className="btn" onClick={() => (setAdding(true), setDone(''))}>
+          Thêm passkey cho thiết bị này
         </button>
       )}
     </section>

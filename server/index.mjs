@@ -7,6 +7,7 @@ import { existsSync, mkdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, extname, join, normalize, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
+import { ALGS, WebAuthnError, b64u, challengeOf, verifyAssertion, verifyRegistration } from './webauthn.mjs';
 
 const scryptAsync = promisify(scrypt);
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -34,6 +35,16 @@ db.exec(`
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     expires INTEGER NOT NULL
   );
+  CREATE TABLE IF NOT EXISTS passkeys (
+    id TEXT PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    public_key BLOB NOT NULL,
+    alg INTEGER NOT NULL,
+    sign_count INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    created INTEGER NOT NULL,
+    last_used INTEGER
+  );
   CREATE TABLE IF NOT EXISTS data (
     user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
     json TEXT NOT NULL,
@@ -44,7 +55,7 @@ db.exec(`
 
 // accounts created before profiles existed get the new columns, empty until the person fills them in
 const userCols = db.prepare('PRAGMA table_info(users)').all().map((c) => c.name);
-for (const col of ['full_name', 'email', 'phone', 'recovery', 'avatar']) if (!userCols.includes(col)) db.exec(`ALTER TABLE users ADD COLUMN ${col} TEXT`);
+for (const col of ['full_name', 'email', 'phone', 'recovery', 'avatar', 'webauthn_id']) if (!userCols.includes(col)) db.exec(`ALTER TABLE users ADD COLUMN ${col} TEXT`);
 // one email, one account (NULLs, i.e. old accounts not yet completed, do not collide)
 db.exec('CREATE UNIQUE INDEX IF NOT EXISTS users_email ON users(email)');
 // sessions from before the device list existed show up as "unknown device", first seen at sign-in time unknown (0)
@@ -75,6 +86,12 @@ const q = {
   // the public id of a session is the first 16 hex of its stored hash: enough to pick it, useless as a login
   revokeSession: db.prepare('DELETE FROM sessions WHERE user_id = ? AND substr(token_hash, 1, 16) = ? AND token_hash <> ?'),
   deleteUser: db.prepare('DELETE FROM users WHERE id = ?'),
+  setWebauthnId: db.prepare('UPDATE users SET webauthn_id = ? WHERE id = ? AND webauthn_id IS NULL'),
+  passkeysOf: db.prepare('SELECT id, name, created, last_used FROM passkeys WHERE user_id = ? ORDER BY created'),
+  passkeyById: db.prepare('SELECT * FROM passkeys WHERE id = ?'),
+  insertPasskey: db.prepare('INSERT INTO passkeys (id, user_id, public_key, alg, sign_count, name, created) VALUES (?, ?, ?, ?, ?, ?, ?)'),
+  usePasskey: db.prepare('UPDATE passkeys SET sign_count = ?, last_used = ? WHERE id = ?'),
+  deletePasskey: db.prepare('DELETE FROM passkeys WHERE id = ? AND user_id = ?'),
   deleteSession: db.prepare('DELETE FROM sessions WHERE token_hash = ?'),
   purgeSessions: db.prepare('DELETE FROM sessions WHERE expires <= ?'),
   getData: db.prepare('SELECT json, rev FROM data WHERE user_id = ?'),
@@ -243,6 +260,45 @@ function cleanAvatar(v) {
   const head = Buffer.from(m[1].slice(0, 8), 'base64');
   if (head[0] !== 0xff || head[1] !== 0xd8 || head[2] !== 0xff) throw new HttpError(400, 'Ảnh không hợp lệ hoặc quá lớn');
   return `data:image/jpeg;base64,${m[1]}`;
+}
+
+// ───────── passkeys (WebAuthn) ─────────
+// The relying party is this host. Behind a proxy that rewrites Host, set SYM_RP_ID (the domain) and SYM_ORIGIN
+// (https://that.domain). WebAuthn needs a secure page: https, or http://localhost while developing.
+
+function relyingParty(req) {
+  const origin = process.env.SYM_ORIGIN ?? `${isSecure(req) ? 'https' : 'http'}://${req.headers.host}`;
+  const rpId = process.env.SYM_RP_ID ?? new URL(origin).hostname;
+  return { origin, rpId };
+}
+
+/** Challenges we issued and have not seen back yet: one use each, 5 minutes. In memory, like the throttles. */
+const challenges = new Map();
+const CHALLENGE_MS = 5 * 60_000;
+
+function issueChallenge(entry) {
+  const now = Date.now();
+  for (const [k, v] of challenges) if (v.expires < now) challenges.delete(k);
+  if (challenges.size > 10_000) throw new HttpError(503, 'Máy chủ đang bận, thử lại sau');
+  const challenge = randomBytes(32).toString('base64url');
+  challenges.set(challenge, { ...entry, expires: now + CHALLENGE_MS });
+  return challenge;
+}
+
+/** The challenge this credential answers, if we issued it for this purpose: used up either way. */
+function takeChallenge(credential, kind) {
+  const c = challengeOf(credential);
+  const entry = c ? challenges.get(c) : undefined;
+  if (c) challenges.delete(c);
+  if (!entry || entry.kind !== kind || entry.expires < Date.now()) throw new HttpError(400, 'Yêu cầu passkey đã hết hạn, thử lại nhé');
+  return { challenge: c, ...entry };
+}
+
+const passkeyList = (userId) => q.passkeysOf.all(userId).map((p) => ({ id: p.id, name: p.name, created: p.created, lastUsed: p.last_used ?? null }));
+
+function cleanPasskeyName(v) {
+  const name = String(v ?? '').trim().replace(/\s+/g, ' ').slice(0, 60);
+  return name || 'Passkey';
 }
 
 // ───────── recovery code ─────────
@@ -455,6 +511,101 @@ async function api(req, res, path) {
       }
     }
     return send(res, 200, profileOf(q.userById.get(user.id)));
+  }
+
+  // passkeys: add one (needs the password), list, remove
+  if (method === 'POST' && path === '/api/passkey/register/options') {
+    const session = requireUser(req);
+    const body = await readJson(req);
+    const key = `pk|${session.id}`;
+    const fail = throttle(key, 5, 10 * 60_000);
+    let user = q.userById.get(session.id);
+    if (!timingSafeEqual(await hashPassword(String(body.password ?? '').slice(0, 128), user.salt), user.hash)) {
+      fail();
+      throw new HttpError(403, 'Mật khẩu không đúng');
+    }
+    hits.delete(key);
+    // a random handle, not the row id: the authenticator stores it, and it says nothing about the account
+    if (!user.webauthn_id) {
+      q.setWebauthnId.run(randomBytes(32).toString('base64url'), user.id);
+      user = q.userById.get(user.id);
+    }
+    const { rpId } = relyingParty(req);
+    return send(res, 200, {
+      challenge: issueChallenge({ kind: 'reg', userId: user.id }),
+      rp: { name: 'SYM', id: rpId },
+      user: { id: user.webauthn_id, name: user.username, displayName: user.full_name || user.username },
+      pubKeyCredParams: ALGS.map((alg) => ({ type: 'public-key', alg })),
+      authenticatorSelection: { residentKey: 'required', requireResidentKey: true, userVerification: 'required' },
+      excludeCredentials: q.passkeysOf.all(user.id).map((p) => ({ type: 'public-key', id: p.id })),
+      attestation: 'none',
+      timeout: CHALLENGE_MS,
+    });
+  }
+
+  if (method === 'POST' && path === '/api/passkey/register') {
+    const session = requireUser(req);
+    const body = await readJson(req);
+    const entry = takeChallenge(body.credential, 'reg');
+    if (entry.userId !== session.id) throw new HttpError(400, 'Yêu cầu passkey không khớp tài khoản');
+    let reg;
+    try {
+      reg = verifyRegistration(body.credential, { challenge: entry.challenge, ...relyingParty(req) });
+    } catch (e) {
+      if (e instanceof WebAuthnError) throw new HttpError(400, e.message);
+      throw e;
+    }
+    if (q.passkeyById.get(reg.id)) throw new HttpError(409, 'Passkey này đã được thêm rồi');
+    if (q.passkeysOf.all(session.id).length >= 10) throw new HttpError(400, 'Tối đa 10 passkey cho mỗi tài khoản');
+    q.insertPasskey.run(reg.id, session.id, reg.spki, reg.alg, reg.signCount, cleanPasskeyName(body.name), Date.now());
+    return send(res, 200, { passkeys: passkeyList(session.id) });
+  }
+
+  if (method === 'GET' && path === '/api/passkeys') {
+    return send(res, 200, { passkeys: passkeyList(requireUser(req).id) });
+  }
+
+  if (method === 'POST' && path === '/api/passkey/delete') {
+    const session = requireUser(req);
+    const body = await readJson(req);
+    q.deletePasskey.run(String(body.id ?? '').slice(0, 1400), session.id);
+    return send(res, 200, { passkeys: passkeyList(session.id) });
+  }
+
+  // sign in with a passkey: the browser offers the passkeys saved for this site, no username needed
+  if (method === 'POST' && path === '/api/passkey/login/options') {
+    throttle(`pkopt|${ip(req)}`, 60, 10 * 60_000)();
+    const { rpId } = relyingParty(req);
+    return send(res, 200, { challenge: issueChallenge({ kind: 'login' }), rpId, userVerification: 'required', timeout: CHALLENGE_MS });
+  }
+
+  if (method === 'POST' && path === '/api/passkey/login') {
+    const body = await readJson(req);
+    const fail = throttle(`pklogin|${ip(req)}`, 10, 10 * 60_000);
+    const entry = takeChallenge(body.credential, 'login');
+    const pk = typeof body.credential?.id === 'string' ? q.passkeyById.get(body.credential.id.slice(0, 1400)) : undefined;
+    if (!pk) {
+      fail();
+      throw new HttpError(401, 'Passkey này không còn gắn với tài khoản nào. Đăng nhập bằng mật khẩu nhé.');
+    }
+    const user = q.userById.get(pk.user_id);
+    const handle = body.credential?.response?.userHandle;
+    if (handle && user.webauthn_id && handle !== user.webauthn_id) {
+      fail();
+      throw new HttpError(401, 'Passkey không khớp tài khoản');
+    }
+    let count;
+    try {
+      count = verifyAssertion(body.credential, { spki: pk.public_key, alg: pk.alg, signCount: pk.sign_count }, { challenge: entry.challenge, ...relyingParty(req) });
+    } catch (e) {
+      if (e instanceof WebAuthnError) {
+        fail();
+        throw new HttpError(401, e.message);
+      }
+      throw e;
+    }
+    q.usePasskey.run(count, Date.now(), pk.id);
+    return startSession(req, res, user);
   }
 
   // the devices signed in to this account
