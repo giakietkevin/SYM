@@ -1,4 +1,5 @@
-import { useState, type FormEvent } from 'react';
+import { useRef, useState, type FormEvent } from 'react';
+import { avatarFromFile } from '../lib/image';
 import { ApiError, api, type Profile } from '../lib/api';
 import { formatPhone, initials } from '../lib/validate';
 import { ContactFields, contactErrors, type Contact, type ContactErrors } from './ContactFields';
@@ -6,10 +7,10 @@ import { Logo } from './icons';
 import { Mascot } from './Mascot';
 import { SecurityCard } from './Security';
 
-export function Avatar({ profile, size = 40 }: { profile: Pick<Profile, 'fullName' | 'username'>; size?: number }) {
+export function Avatar({ profile, size = 40 }: { profile: Pick<Profile, 'fullName' | 'username' | 'avatar'>; size?: number }) {
   return (
     <span className="avatar" style={{ width: size, height: size, fontSize: Math.round(size * 0.4) }} aria-hidden="true">
-      {initials(profile.fullName, profile.username)}
+      {profile.avatar ? <img src={profile.avatar} alt="" draggable={false} /> : initials(profile.fullName, profile.username)}
     </span>
   );
 }
@@ -85,6 +86,21 @@ export function ProfileScreen({ profile, onSaved }: { profile: Profile; onSaved:
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [saved, setSaved] = useState(false);
+  const [photoBusy, setPhotoBusy] = useState(false);
+  const [photoError, setPhotoError] = useState('');
+  const picker = useRef<HTMLInputElement>(null);
+
+  const setPhoto = async (make: () => Promise<string | null>) => {
+    if (photoBusy) return;
+    setPhotoBusy(true);
+    setPhotoError('');
+    try {
+      onSaved(await api.setAvatar(await make()));
+    } catch (err) {
+      setPhotoError(err instanceof ApiError ? (err.status === 0 ? 'Cần có mạng để đổi ảnh' : err.message) : err instanceof Error ? err.message : 'Không lưu được ảnh');
+    }
+    setPhotoBusy(false);
+  };
 
   const changed = name.trim().replace(/\s+/g, ' ') !== profile.fullName;
 
@@ -108,12 +124,38 @@ export function ProfileScreen({ profile, onSaved }: { profile: Profile; onSaved:
   return (
     <div className="profile">
       <div className="profile-head">
-        <Avatar profile={profile} size={72} />
-        <div>
+        <Avatar profile={profile} size={88} />
+        <div className="profile-who">
           <h2 className="profile-name">{profile.fullName || profile.username}</h2>
           <p className="hint">@{profile.username}</p>
+          <div className="row wrap">
+            <button type="button" className="btn" disabled={photoBusy} onClick={() => picker.current?.click()}>
+              {photoBusy ? 'Đang lưu…' : profile.avatar ? 'Đổi ảnh' : 'Thêm ảnh'}
+            </button>
+            {profile.avatar && (
+              <button type="button" className="btn text negative" disabled={photoBusy} onClick={() => setPhoto(async () => null)}>
+                Xóa ảnh
+              </button>
+            )}
+            <input
+              ref={picker}
+              type="file"
+              accept="image/*"
+              hidden
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                e.target.value = '';
+                if (file) setPhoto(() => avatarFromFile(file));
+              }}
+            />
+          </div>
         </div>
       </div>
+      {photoError && (
+        <p className="error" role="alert">
+          {photoError}
+        </p>
+      )}
 
       <form className="profile-card" onSubmit={submit}>
         <label className="field">

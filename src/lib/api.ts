@@ -44,6 +44,8 @@ export interface Profile {
   phone: string | null;
   /** whether a recovery code exists for forgotten-password reset (the code itself is never sent again) */
   hasRecovery: boolean;
+  /** small JPEG data URL, or null for the initials circle */
+  avatar?: string | null;
 }
 
 /** Sign-up and a password reset answer with the profile plus a fresh recovery code, shown once. */
@@ -68,6 +70,8 @@ export const api = {
   newRecoveryCode: (password: string) => call<{ recoveryCode: string }>('/api/recovery-code', 'POST', { password }),
   /** forgotten password: username or email + recovery code -> new password, signed in */
   reset: (identifier: string, code: string, password: string) => call<WithCode>('/api/reset', 'POST', { username: identifier, code, password }),
+  /** a data URL from avatarFromFile, or null to remove the picture */
+  setAvatar: (image: string | null) => call<Profile>('/api/avatar', 'PUT', { image }),
   logout: () => call<{ ok: true }>('/api/logout', 'POST', {}),
   getData: () => call<Remote>('/api/data'),
   putData: (state: State, rev: number) => call<{ rev: number }>('/api/data', 'PUT', { state, rev }),

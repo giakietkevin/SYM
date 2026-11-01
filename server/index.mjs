@@ -44,7 +44,7 @@ db.exec(`
 
 // accounts created before profiles existed get the new columns, empty until the person fills them in
 const userCols = db.prepare('PRAGMA table_info(users)').all().map((c) => c.name);
-for (const col of ['full_name', 'email', 'phone', 'recovery']) if (!userCols.includes(col)) db.exec(`ALTER TABLE users ADD COLUMN ${col} TEXT`);
+for (const col of ['full_name', 'email', 'phone', 'recovery', 'avatar']) if (!userCols.includes(col)) db.exec(`ALTER TABLE users ADD COLUMN ${col} TEXT`);
 // one email, one account (NULLs, i.e. old accounts not yet completed, do not collide)
 db.exec('CREATE UNIQUE INDEX IF NOT EXISTS users_email ON users(email)');
 
@@ -54,6 +54,7 @@ const q = {
   userById: db.prepare('SELECT * FROM users WHERE id = ?'),
   insertUser: db.prepare('INSERT INTO users (username, salt, hash, created, full_name, email, phone) VALUES (?, ?, ?, ?, ?, ?, ?)'),
   setPassword: db.prepare('UPDATE users SET salt = ?, hash = ? WHERE id = ?'),
+  setAvatar: db.prepare('UPDATE users SET avatar = ? WHERE id = ?'),
   setRecovery: db.prepare('UPDATE users SET recovery = ? WHERE id = ?'),
   otherSessions: db.prepare('DELETE FROM sessions WHERE user_id = ? AND token_hash <> ?'),
   allSessions: db.prepare('DELETE FROM sessions WHERE user_id = ?'),
@@ -211,7 +212,20 @@ const profileOf = (u) => ({
   email: u.email ?? null,
   phone: u.phone ?? null,
   hasRecovery: !!u.recovery,
+  avatar: u.avatar ?? null,
 });
+
+const AVATAR_MAX = 150_000; // characters of base64 (about 110 KB): the client sends ~256px JPEGs far below that
+
+/** Only a JPEG, checked by its first bytes: nothing the browser could run is ever stored or sent back as an image. */
+function cleanAvatar(v) {
+  if (v === null) return null;
+  const m = /^data:image\/jpeg;base64,([A-Za-z0-9+/]+={0,2})$/.exec(typeof v === 'string' ? v : '');
+  if (!m || m[1].length > AVATAR_MAX) throw new HttpError(400, 'Ảnh không hợp lệ hoặc quá lớn');
+  const head = Buffer.from(m[1].slice(0, 8), 'base64');
+  if (head[0] !== 0xff || head[1] !== 0xd8 || head[2] !== 0xff) throw new HttpError(400, 'Ảnh không hợp lệ hoặc quá lớn');
+  return `data:image/jpeg;base64,${m[1]}`;
+}
 
 // ───────── recovery code ─────────
 // No email service here, so a forgotten password is recovered with a code shown once, at sign-up (or when
@@ -294,7 +308,7 @@ async function api(req, res, path) {
       throw e;
     }
     const created = q.userById.get(id);
-    return startSession(req, res, created, { recoveryCode: issueRecovery(id) });
+    return startSession(req, res, created, { recoveryCode: issueRecovery(id), hasRecovery: true });
   }
 
   if (method === 'POST' && path === '/api/login') {
@@ -336,6 +350,14 @@ async function api(req, res, path) {
     return send(res, 200, { ok: true });
   }
 
+  // profile picture: a small JPEG data URL, or null to remove it
+  if (method === 'PUT' && path === '/api/avatar') {
+    const session = requireUser(req);
+    const body = await readJson(req);
+    q.setAvatar.run(cleanAvatar(body.image === undefined ? undefined : body.image), session.id);
+    return send(res, 200, profileOf(q.userById.get(session.id)));
+  }
+
   // a new recovery code replaces the old one (accounts made before codes existed get theirs here)
   if (method === 'POST' && path === '/api/recovery-code') {
     const session = requireUser(req);
@@ -371,7 +393,7 @@ async function api(req, res, path) {
     q.allSessions.run(user.id);
     hits.delete(`reset|${ip(req)}|${who}`);
     const code = issueRecovery(user.id); // a code works once
-    return startSession(req, res, q.userById.get(user.id), { recoveryCode: code });
+    return startSession(req, res, q.userById.get(user.id), { recoveryCode: code, hasRecovery: true });
   }
 
   if (method === 'POST' && path === '/api/logout') {

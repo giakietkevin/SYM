@@ -1,5 +1,5 @@
 import { dateKey } from './recurring';
-import type { Hue, Jar, Recurring, State, Theme, Tx } from './types';
+import type { Debt, Hue, Jar, Recurring, State, Theme, Tx } from './types';
 import { HUES, THEME_NAMES } from './types';
 
 export const BACKUP_MAX_BYTES = 2 * 1024 * 1024; // same ceiling as the server
@@ -91,6 +91,34 @@ function cleanRecurring(x: unknown): Recurring | null {
   };
 }
 
+function cleanDebt(x: unknown): Debt | null {
+  if (!isObj(x)) return null;
+  const id = str(x.id, 90);
+  const who = str(x.who, 80);
+  const note = x.note === undefined ? '' : str(x.note, 200);
+  const amount = num(x.amount);
+  const ts = num(x.ts);
+  if (!id || !who || note === null || amount === null || amount <= 0 || ts === null) return null;
+  if (x.dir !== 'owed' && x.dir !== 'owe') return null;
+  const from = x.from === undefined ? undefined : str(x.from, 64);
+  const batch = x.batch === undefined ? undefined : str(x.batch, 90);
+  const settledTx = x.settledTx === undefined ? undefined : str(x.settledTx, 100);
+  if (from === null || batch === null || settledTx === null) return null;
+  return {
+    id,
+    who,
+    dir: x.dir,
+    amount,
+    note,
+    ts,
+    ...(from ? { from } : {}),
+    ...(batch ? { batch } : {}),
+    ...(x.settled === true ? { settled: true } : {}),
+    ...(settledTx ? { settledTx } : {}),
+    ...(x.deleted === true ? { deleted: true } : {}),
+  };
+}
+
 export type ParsedBackup = { ok: true; state: State; jars: number; txs: number } | { ok: false; error: string };
 
 /**
@@ -115,6 +143,9 @@ export function parseBackup(text: string): ParsedBackup {
   const recurring = Array.isArray(src.recurring) ? src.recurring.map(cleanRecurring) : [];
   if (recurring.some((r) => !r)) return { ok: false, error: 'File sao lưu bị lỗi, không khôi phục được' };
 
+  const debts = Array.isArray(src.debts) ? src.debts.map(cleanDebt) : [];
+  if (debts.some((d) => !d)) return { ok: false, error: 'File sao lưu bị lỗi, không khôi phục được' };
+
   let rule: State['rule'];
   if (isObj(src.rule)) {
     rule = {};
@@ -128,13 +159,19 @@ export function parseBackup(text: string): ParsedBackup {
     rule,
     rolled: typeof src.rolled === 'string' && /^\d{4}-\d{2}$/.test(src.rolled) ? src.rolled : undefined,
     recurring: recurring.length ? (recurring as Recurring[]) : undefined,
+    debts: debts.length ? (debts as Debt[]) : undefined,
   };
   return { ok: true, state, jars: state.jars.filter((j) => !j.deleted).length, txs: state.txs.filter((t) => !t.deleted).length };
 }
 
 /** Hand a text file to the browser's download. */
 export function download(name: string, mime: string, text: string) {
-  const url = URL.createObjectURL(new Blob([text], { type: `${mime};charset=utf-8` }));
+  downloadBlob(name, new Blob([text], { type: `${mime};charset=utf-8` }));
+}
+
+/** Hand any file (a picture, say) to the browser's download. */
+export function downloadBlob(name: string, blob: Blob) {
+  const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
   a.download = name;

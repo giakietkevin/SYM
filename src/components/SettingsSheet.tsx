@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import type { SyncStatus } from '../lib/sync';
 import type { ThemePref } from '../lib/theme';
 import { Seg, Sheet, Toggle } from './ui';
@@ -17,6 +17,9 @@ export function SettingsSheet({
   onSplit,
   recurringSummary,
   onRecurring,
+  onExportJson,
+  onExportCsv,
+  onImport,
   themePref,
   onTheme,
   sound,
@@ -33,6 +36,9 @@ export function SettingsSheet({
   onSplit: () => void;
   recurringSummary: string;
   onRecurring: () => void;
+  onExportJson: () => void;
+  onExportCsv: () => void;
+  onImport: (file: File) => void;
   themePref: ThemePref;
   onTheme: (p: ThemePref) => void;
   sound: boolean;
@@ -43,6 +49,7 @@ export function SettingsSheet({
   onClose: () => void;
 }) {
   const [confirming, setConfirming] = useState(false);
+  const picker = useRef<HTMLInputElement>(null);
   return (
     <Sheet title="Cài đặt" onClose={onClose}>
       <div className="setting">
@@ -102,12 +109,35 @@ export function SettingsSheet({
         </div>
         <Toggle on={haptics} onChange={onHaptics} label="Rung phản hồi" />
       </div>
-      <div className="setting">
-        <div>
-          <b>Dữ liệu</b>
-          <p className="hint">Lưu theo tài khoản trên máy chủ, và giữ một bản trên máy này để dùng khi không có mạng.</p>
+      <section className="field">
+        <h3 className="label">Sao lưu dữ liệu</h3>
+        <p className="hint">
+          Dữ liệu được lưu theo tài khoản trên máy chủ và giữ một bản trên máy này. Bản sao lưu là một file chứa toàn bộ hũ và giao dịch của bạn, hãy giữ riêng tư.
+        </p>
+        <div className="row wrap">
+          <button className="btn" onClick={onExportJson}>
+            Tải bản sao lưu
+          </button>
+          <button className="btn" onClick={onExportCsv}>
+            Xuất giao dịch (Excel)
+          </button>
+          <button className="btn" onClick={() => picker.current?.click()}>
+            Khôi phục từ file
+          </button>
+          <input
+            ref={picker}
+            type="file"
+            accept="application/json,.json"
+            hidden
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              e.target.value = '';
+              if (file) onImport(file);
+            }}
+          />
         </div>
-      </div>
+        <p className="hint">Khôi phục sẽ gộp file vào dữ liệu hiện có, không ghi đè và không nhân đôi. Có thể hoàn tác ngay sau đó.</p>
+      </section>
       <div className="danger">
         {!confirming ? (
           <button className="btn text negative" onClick={() => setConfirming(true)}>

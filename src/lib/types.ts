@@ -65,6 +65,26 @@ export interface Recurring {
   deleted?: boolean;
 }
 
+/**
+ * Money between me and a friend that has not moved yet. `owed`: they owe me. `owe`: I owe them.
+ * Settling writes one ordinary ledger line (`debt:<id>`), so balances still come only from the ledger.
+ */
+export interface Debt {
+  id: string;
+  who: string;
+  dir: 'owed' | 'owe';
+  amount: number;
+  note: string;
+  ts: number;
+  /** a split bill: the jar it was paid from, where the money comes back to by default */
+  from?: Loc;
+  /** lines created together (a bill and its debts) undo together */
+  batch?: string;
+  settled?: boolean;
+  settledTx?: string;
+  deleted?: boolean;
+}
+
 export interface State {
   jars: Jar[];
   txs: Tx[];
@@ -74,6 +94,7 @@ export interface State {
   /** last month (YYYY-MM) whose spending jars were refilled or skipped */
   rolled?: string;
   recurring?: Recurring[];
+  debts?: Debt[];
 }
 
 /**

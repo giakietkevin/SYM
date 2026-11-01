@@ -11,17 +11,25 @@ import { MonthSheet } from './components/MonthSheet';
 import { SplitSheet } from './components/SplitSheet';
 import { RecurringSheet } from './components/RecurringSheet';
 import { dateKey, dueTxs } from './lib/recurring';
+import { backupJson, BACKUP_MAX_BYTES, download, parseBackup, txCsv } from './lib/backup';
 import { PulseCard, PulseSheet } from './components/Pulse';
+import { BubbleMap } from './components/BubbleMap';
+import { AchievementsSheet } from './components/Achievements';
+import { DebtCard, DebtSheet, type BillInput, type LoanInput } from './components/DebtSheet';
+import { ReportSheet } from './components/ReportSheet';
+import { billLines, settleTx } from './lib/debts';
+import { goalPlan } from './lib/goal';
+import { badges as computeBadges, streakInfo } from './lib/streak';
 import { computePulse } from './lib/pulse';
 import { TxSheet } from './components/TxSheet';
 import { TxRow, dayLabel, locName } from './components/TxRow';
-import { Money } from './components/ui';
+import { Money, Seg } from './components/ui';
 import { chime, haptic, pop, setFeedbackFlags, soft } from './lib/feedback';
 import { useDrag } from './lib/drag';
 import { fmtD } from './lib/money';
 import { jarStatus } from './lib/jar';
 import { api, ApiError } from './lib/api';
-import { parseState, uid, useStore } from './lib/store';
+import { mergeStates, parseState, uid, useStore } from './lib/store';
 import { seed } from './lib/seed';
 import { monthKey, type RefillStep } from './lib/rollover';
 import { planSplit, ruleTotal } from './lib/split';
@@ -31,7 +39,7 @@ import { Avatar, CompleteProfile, ProfileScreen } from './components/Profile';
 import { AuthScreen } from './components/AuthScreen';
 import { RecoveryScreen } from './components/Recovery';
 import { useTheme, type Theme, type ThemePref } from './lib/theme';
-import type { Loc, Rule, State, Tx } from './lib/types';
+import type { Debt, Loc, Rule, State, Tx } from './lib/types';
 
 type Sheet =
   | { k: 'quick'; jar?: string }
@@ -44,9 +52,22 @@ type Sheet =
   | { k: 'tx'; id: string }
   | { k: 'pulse' }
   | { k: 'recurring' }
+  | { k: 'debts' }
+  | { k: 'report' }
+  | { k: 'achievements' }
   | null;
 
 type Screen = 'home' | 'history' | 'profile';
+type View = 'jars' | 'bubbles';
+
+const VIEW_KEY = 'sym.view';
+const readView = (): View => {
+  try {
+    return localStorage.getItem(VIEW_KEY) === 'bubbles' ? 'bubbles' : 'jars';
+  } catch {
+    return 'jars';
+  }
+};
 type Filter = 'all' | 'expense' | 'income' | 'transfer';
 
 function Main({
@@ -82,6 +103,15 @@ function Main({
   const [toast, setToast] = useState<{ text: string; undo?: () => void } | null>(null);
   const [fx, setFx] = useState<Fx[]>([]);
   const [filter, setFilter] = useState<Filter>('all');
+  const [view, setViewState] = useState<View>(readView);
+  const setView = (v: View) => {
+    setViewState(v);
+    try {
+      localStorage.setItem(VIEW_KEY, v);
+    } catch {
+      /* blocked: the choice just does not stick */
+    }
+  };
   const toastTimer = useRef(0);
   const fxN = useRef(0);
 
@@ -265,7 +295,58 @@ function Main({
   }, [spendJars, bal, store.funded]);
 
   const pulse = useMemo(() => computePulse(txs, jars), [txs, jars]);
-  const mood = worst ? 'nervous' : 'happy';
+  const streak = useMemo(() => streakInfo(state.txs), [state.txs, today]); // eslint-disable-line react-hooks/exhaustive-deps
+  const badgeList = useMemo(() => computeBadges(state, jars, bal), [state, jars, bal, today]); // eslint-disable-line react-hooks/exhaustive-deps
+  const earned = badgeList.filter((b) => b.earned);
+
+  // a saving jar that is late or behind its plan (the first one), and whether any goal is reached
+  const goalAlert = useMemo(() => {
+    for (const j of jars) {
+      const p = goalPlan(j, bal[j.id] ?? 0);
+      if (p && (p.state === 'behind' || p.state === 'overdue')) return { jar: j, plan: p };
+    }
+    return null;
+  }, [jars, bal, today]); // eslint-disable-line react-hooks/exhaustive-deps
+  const goalReached = jars.some((j) => goalPlan(j, bal[j.id] ?? 0)?.state === 'done');
+
+  // a badge is announced once per device; the first look only records what is already earned
+  const seenKey = `sym.badges.${user}`;
+  const earnedNow = useRef<string[]>([]);
+  earnedNow.current = earned.map((b) => b.id);
+  useEffect(() => {
+    const read = (): string[] | null => {
+      try {
+        const raw = localStorage.getItem(seenKey);
+        return raw ? (JSON.parse(raw) as string[]) : null;
+      } catch {
+        return null;
+      }
+    };
+    const write = (ids: string[]) => {
+      try {
+        localStorage.setItem(seenKey, JSON.stringify(ids));
+      } catch {
+        /* blocked: it may be announced again next time */
+      }
+    };
+    const seen = read();
+    if (!seen) return write(earned.map((b) => b.id)); // first look on this device: record, do not announce
+    const fresh = earned.filter((b) => !seen.includes(b.id));
+    if (!fresh.length) return;
+    // wait for the toast that caused it to go away (it may carry an undo); announce only what is still earned,
+    // and mark it seen only once it has been announced, so an undone-then-redone badge still gets its moment
+    const timer = window.setTimeout(() => {
+      const now = read() ?? [];
+      const still = fresh.filter((b) => earnedNow.current.includes(b.id) && !now.includes(b.id));
+      if (!still.length) return;
+      chime();
+      say(`Huy hiệu mới: ${still.map((b) => b.name).join(', ')}`);
+      write([...new Set([...now, ...still.map((b) => b.id)])]);
+    }, 5300);
+    return () => window.clearTimeout(timer);
+  }, [earned.map((b) => b.id).join(','), seenKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const mood = worst ? 'nervous' : streak.current >= 3 || goalReached ? 'proud' : 'happy';
   const needsRefill = !!state.rolled && state.rolled < monthKey() && spendJars.length > 0;
   const ruleSum = ruleTotal(state.rule, jars);
   const total = wallet + jars.reduce((s, j) => s + (bal[j.id] ?? 0), 0);
@@ -296,6 +377,64 @@ function Main({
     haptic('warn');
     setSheet(null);
     say(ids.length > 1 ? `Đã xóa ${ids.length} dòng giao dịch` : 'Đã xóa giao dịch', () => dispatch({ t: 'setDeleted', ids, deleted: false }));
+  };
+
+  /** A bill paid up front: the whole amount leaves the jar now, each friend's share becomes a debt to me. */
+  const splitBillNow = (b: BillInput) => {
+    const id = uid();
+    const { tx, debts } = billLines({ id, total: b.total, from: b.from, note: b.note, friends: b.friends, includeMe: b.includeMe, now: Date.now() });
+    dispatch({ t: 'addBill', tx, debts });
+    pop();
+    haptic('success');
+    showFx([{ id: b.from, kind: 'out', amount: b.total }]);
+    say(`Đã chia hóa đơn ${fmtD(b.total)}: ${b.friends.length} bạn nợ ${fmtD(debts[0]?.amount ?? 0)} mỗi người`, () => dispatch({ t: 'undoBill', id }));
+  };
+
+  const addLoan = (l: LoanInput) => {
+    const debt: Debt = { id: uid(), who: l.who, dir: l.dir, amount: l.amount, note: l.note, ts: Date.now() };
+    dispatch({ t: 'saveDebt', debt });
+    soft();
+    haptic('success');
+    say(l.dir === 'owed' ? `Đã ghi: ${l.who} nợ bạn ${fmtD(l.amount)}` : `Đã ghi: bạn nợ ${l.who} ${fmtD(l.amount)}`, () => dispatch({ t: 'deleteDebt', id: debt.id }));
+  };
+
+  const settleDebt = (d: Debt, place: Loc) => {
+    dispatch({ t: 'settleDebt', id: d.id, tx: settleTx(d, place, Date.now()) });
+    chime();
+    haptic('drop');
+    if (d.dir === 'owed' && place !== 'wallet') showFx([{ id: place, kind: 'in', amount: d.amount }]);
+    say(d.dir === 'owed' ? `${d.who} đã trả ${fmtD(d.amount)} vào ${locName(place, state.jars)}` : `Đã trả ${d.who} ${fmtD(d.amount)}`, () => dispatch({ t: 'unsettleDebt', id: d.id }));
+  };
+
+  const removeDebt = (d: Debt) => {
+    dispatch({ t: 'deleteDebt', id: d.id });
+    haptic('warn');
+    say(`Đã xóa khoản nợ của ${d.who}`, () => dispatch({ t: 'restoreDebt', id: d.id }));
+  };
+
+  const exportJson = () => {
+    download(`sym-sao-luu-${user}-${dateKey(new Date())}.json`, 'application/json', backupJson(state));
+    say('Đã tải bản sao lưu. Giữ file này ở nơi an toàn nhé');
+  };
+  const exportCsv = () => {
+    download(`sym-giao-dich-${user}-${dateKey(new Date())}.csv`, 'text/csv', txCsv(state));
+    say(`Đã xuất ${txs.length} giao dịch`);
+  };
+  /** A backup is merged into what is here (never replaces it), so restoring twice changes nothing. */
+  const importBackup = async (file: File) => {
+    if (file.size > BACKUP_MAX_BYTES) return say('File quá lớn để là bản sao lưu của SYM');
+    let text: string;
+    try {
+      text = await file.text();
+    } catch {
+      return say('Không đọc được file này');
+    }
+    const parsed = parseBackup(text);
+    if (!parsed.ok) return say(parsed.error);
+    const before = state;
+    dispatch({ t: 'load', state: mergeStates(state, parsed.state) });
+    haptic('success');
+    say(`Đã khôi phục từ file: ${parsed.jars} hũ, ${parsed.txs} giao dịch`, () => dispatch({ t: 'load', state: before }));
   };
 
   const openJar = (id: string) => guard(() => setSheet({ k: 'jar', id }));
@@ -387,8 +526,12 @@ function Main({
               )}
             </p>
           </div>
-          <button className="icon-btn avatar-btn" onClick={() => setScreen('profile')} aria-label="Hồ sơ của bạn" aria-current={screen === 'profile' ? 'page' : undefined}>
-            <Avatar profile={profile} size={36} />
+          <button className="me-btn" onClick={() => setScreen('profile')} aria-label={`Hồ sơ của ${profile.fullName || profile.username}`} aria-current={screen === 'profile' ? 'page' : undefined}>
+            <span className="me-text">
+              <span className="me-hi">Xin chào</span>
+              <b className="me-name">{profile.fullName || profile.username}</b>
+            </span>
+            <Avatar profile={profile} size={40} />
           </button>
           <button className="icon-btn theme-btn" onClick={onToggleTheme} aria-label={theme === 'dark' ? 'Chuyển sang giao diện sáng' : 'Chuyển sang giao diện tối'}>
             {theme === 'dark' ? <IconSun /> : <IconMoon />}
@@ -414,6 +557,27 @@ function Main({
               </section>
             )}
             <div className="jars">
+              {jars.length > 0 && (
+                <Seg
+                  label="Cách xem các hũ"
+                  value={view}
+                  onChange={setView}
+                  options={[
+                    { value: 'jars', label: 'Hũ' },
+                    { value: 'bubbles', label: 'Bong bóng' },
+                  ]}
+                />
+              )}
+              {view === 'bubbles' && jars.length > 0 ? (
+                <section aria-labelledby="h-bubbles">
+                  <h2 id="h-bubbles" className="sec">Tiền đang nằm ở đâu</h2>
+                  <BubbleMap
+                    store={store}
+                    onOpen={(loc) => (loc === 'wallet' ? setSheet({ k: 'transfer', from: 'wallet' }) : setSheet({ k: 'jar', id: loc }))}
+                  />
+                </section>
+              ) : (
+              <>
               <section aria-labelledby="h-spend">
                 <h2 id="h-spend" className="sec">Hũ chi tiêu</h2>
                 <div className="jar-grid">
@@ -428,6 +592,8 @@ function Main({
                   {newJarTile}
                 </div>
               </section>
+              </>
+              )}
             </div>
 
             <div className="side">
@@ -440,12 +606,23 @@ function Main({
                     ? worst.over
                       ? `Hũ ${worst.name} đã lạm quá hạn mức. Kéo tiền từ hũ khác sang để bù nhé.`
                       : `Hũ ${worst.name} đã dùng ${worst.pct}% hạn mức. Đi chậm lại xíu nha.`
-                    : jars.length === 0
-                      ? 'Chào bạn! Tạo hũ đầu tiên để bắt đầu nhé.'
-                      : wallet > 0
-                      ? `Ví tổng còn ${fmtD(wallet)} chưa chia. Kéo thẻ ví vào một hũ nhé.`
-                      : 'Mọi hũ đều ổn. Cứ thế phát huy nhé!'}
+                    : goalAlert
+                      ? goalAlert.plan.state === 'overdue'
+                        ? `Mục tiêu ${goalAlert.jar.name} đã quá hạn, còn thiếu ${fmtD(goalAlert.plan.remaining)}. Mình dời hạn hoặc gom thêm nhé.`
+                        : `Mục tiêu ${goalAlert.jar.name} đang chậm ${fmtD(goalAlert.plan.gap)}. Mỗi tháng gửi thêm ${fmtD(goalAlert.plan.perMonth)} là kịp hạn.`
+                      : jars.length === 0
+                        ? 'Chào bạn! Tạo hũ đầu tiên để bắt đầu nhé.'
+                        : wallet > 0
+                          ? `Ví tổng còn ${fmtD(wallet)} chưa chia. Kéo thẻ ví vào một hũ nhé.`
+                          : goalReached
+                            ? 'Có hũ đã đạt mục tiêu rồi! Xu tự hào về bạn lắm.'
+                            : streak.current >= 2
+                              ? `Chuỗi ${streak.current} ngày liên tiếp! Giữ vững nhé.`
+                              : 'Mọi hũ đều ổn. Cứ thế phát huy nhé!'}
                 </p>
+                <button className="xu-chip" onClick={() => setSheet({ k: 'achievements' })}>
+                  {streak.current > 0 ? `Chuỗi ${streak.current} ngày` : 'Thành tích'} · {earned.length}/{badgeList.length} huy hiệu
+                </button>
               </div>
             </section>
 
@@ -482,6 +659,20 @@ function Main({
             </section>
 
             {pulse.hasActivity && <PulseCard pulse={pulse} onOpen={() => setSheet({ k: 'pulse' })} />}
+
+            {jars.length > 0 && <DebtCard debts={state.debts} onOpen={() => setSheet({ k: 'debts' })} />}
+
+            {txs.length > 0 && (
+              <section className="report-link" aria-label="Báo cáo tháng">
+                <div>
+                  <h2 className="sec">Báo cáo tháng {now.getMonth() + 1}</h2>
+                  <p className="hint">Xem tổng kết và chia sẻ thành một tấm ảnh.</p>
+                </div>
+                <button className="btn" onClick={() => setSheet({ k: 'report' })}>
+                  Xem
+                </button>
+              </section>
+            )}
 
             <section className="recent" aria-labelledby="h-recent">
               <div className="sec-row">
@@ -588,6 +779,11 @@ function Main({
       )}
       {sheet?.k === 'tx' && editTx && <TxSheet key={editTx.id} store={store} tx={editTx} onSave={saveTx} onDelete={removeTxs} onClose={() => setSheet(null)} />}
       {sheet?.k === 'pulse' && <PulseSheet pulse={pulse} onClose={() => setSheet(null)} />}
+      {sheet?.k === 'debts' && (
+        <DebtSheet store={store} onBill={splitBillNow} onLoan={addLoan} onSettle={settleDebt} onDelete={removeDebt} onClose={() => setSheet(null)} />
+      )}
+      {sheet?.k === 'report' && <ReportSheet store={store} name={profile.fullName || profile.username} onClose={() => setSheet(null)} onSay={(t) => say(t)} />}
+      {sheet?.k === 'achievements' && <AchievementsSheet streak={streak} badges={badgeList} onClose={() => setSheet(null)} />}
       {sheet?.k === 'recurring' && (
         <RecurringSheet
           store={store}
@@ -646,6 +842,9 @@ function Main({
             return n ? `${n} khoản tự ghi mỗi tháng.` : 'Tiền trọ, Netflix, lương… tự ghi mỗi tháng.';
           })()}
           onRecurring={() => setSheet({ k: 'recurring' })}
+          onExportJson={exportJson}
+          onExportCsv={exportCsv}
+          onImport={importBackup}
           themePref={themePref}
           onTheme={onTheme}
           username={user}

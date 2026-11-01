@@ -1,11 +1,18 @@
 import { useMemo, useReducer } from 'react';
 import { balanceOf, live, mergeStates } from './ledger';
 import { seed } from './seed';
-import type { Jar, Loc, Recurring, Rule, State, Tx } from './types';
+import type { Debt, Jar, Loc, Recurring, Rule, State, Tx } from './types';
 
 type Action =
   | { t: 'addTx'; tx: Tx }
   | { t: 'addTxs'; txs: Tx[] }
+  | { t: 'addBill'; tx: Tx; debts: Debt[] }
+  | { t: 'undoBill'; id: string }
+  | { t: 'saveDebt'; debt: Debt }
+  | { t: 'deleteDebt'; id: string }
+  | { t: 'restoreDebt'; id: string }
+  | { t: 'settleDebt'; id: string; tx: Tx }
+  | { t: 'unsettleDebt'; id: string }
   | { t: 'saveRecurring'; item: Recurring }
   | { t: 'removeRecurring'; id: string }
   | { t: 'undoTx'; id: string }
@@ -23,12 +30,43 @@ export const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().to
 
 export { balanceOf, mergeStates };
 
-function reducer(s: State, a: Action): State {
+export function reducer(s: State, a: Action): State {
   switch (a.t) {
     case 'addTx':
       return { ...s, txs: [...s.txs, a.tx] };
     case 'addTxs':
       return { ...s, txs: [...s.txs, ...a.txs] };
+    case 'addBill':
+      return { ...s, txs: [...s.txs, a.tx], debts: [...(s.debts ?? []), ...a.debts] };
+    case 'undoBill': {
+      // the bill, and any repayment already booked against its debts
+      const repaid = new Set((s.debts ?? []).filter((d) => d.batch === a.id).map((d) => `debt:${d.id}`));
+      return {
+        ...s,
+        txs: s.txs.map((x) => (x.id === a.id || x.batch === a.id || repaid.has(x.id) ? { ...x, deleted: true } : x)),
+        debts: (s.debts ?? []).map((d) => (d.batch === a.id ? { ...d, deleted: true } : d)),
+      };
+    }
+    case 'saveDebt':
+      return { ...s, debts: [...(s.debts ?? []), a.debt] };
+    case 'deleteDebt':
+      return { ...s, debts: (s.debts ?? []).map((d) => (d.id === a.id ? { ...d, deleted: true } : d)) };
+    case 'restoreDebt':
+      return { ...s, debts: (s.debts ?? []).map((d) => (d.id === a.id ? { ...d, deleted: undefined } : d)) };
+    case 'settleDebt': {
+      const has = s.txs.some((x) => x.id === a.tx.id);
+      return {
+        ...s,
+        txs: has ? s.txs.map((x) => (x.id === a.tx.id ? { ...a.tx } : x)) : [...s.txs, a.tx],
+        debts: (s.debts ?? []).map((d) => (d.id === a.id ? { ...d, settled: true, settledTx: a.tx.id } : d)),
+      };
+    }
+    case 'unsettleDebt':
+      return {
+        ...s,
+        txs: s.txs.map((x) => (x.id === `debt:${a.id}` ? { ...x, deleted: true } : x)),
+        debts: (s.debts ?? []).map((d) => (d.id === a.id ? { ...d, settled: undefined, settledTx: undefined } : d)),
+      };
     case 'saveRecurring': {
       const list = s.recurring ?? [];
       return { ...s, recurring: list.some((r) => r.id === a.item.id) ? list.map((r) => (r.id === a.item.id ? a.item : r)) : [...list, a.item] };
@@ -85,6 +123,7 @@ export function parseState(x: unknown): State | null {
     rule: s.rule && typeof s.rule === 'object' ? s.rule : undefined,
     rolled: typeof s.rolled === 'string' ? s.rolled : undefined,
     recurring: Array.isArray(s.recurring) ? s.recurring : undefined,
+    debts: Array.isArray(s.debts) ? s.debts : undefined,
   };
 }
 

@@ -1,5 +1,6 @@
 import { fmtD } from '../lib/money';
-import { jarStatus, monthsLeft } from '../lib/jar';
+import { goalPlan } from '../lib/goal';
+import { jarStatus } from '../lib/jar';
 import type { Store } from '../lib/store';
 import { HUES, THEME_NAMES, type Jar, type Tx } from '../lib/types';
 import { IconEdit, IconPlus, IconSwap } from './icons';
@@ -30,7 +31,7 @@ export function JarDetail({
   const st = jarStatus(jar, bal, store.funded[jar.id]);
   const h = HUES[jar.hue];
   const recent = store.txs.filter((t) => t.from === jar.id || t.to === jar.id).slice(0, 5);
-  const perMonth = jar.kind === 'save' && jar.due && bal < jar.goal ? Math.ceil((jar.goal - bal) / monthsLeft(jar.due)) : 0;
+  const plan = goalPlan(jar, bal);
 
   return (
     <Sheet title={jar.name} onClose={onClose}>
@@ -50,9 +51,15 @@ export function JarDetail({
                 : `Đã dùng ${st.pct}% hạn mức ${fmtD(jar.goal)}`
               : `${st.pct}% của mục tiêu ${fmtD(jar.goal)}`}
           </p>
-          {perMonth > 0 && jar.due && (
-            <p className="detail-sub num">
-              Còn {monthsLeft(jar.due)} tháng, mỗi tháng gửi thêm {fmtD(perMonth)}
+          {plan && plan.state !== 'open' && (
+            <p className="detail-sub num goal-note" data-goal={plan.state}>
+              {plan.state === 'done'
+                ? 'Đã đủ mục tiêu. Chúc mừng bạn!'
+                : plan.state === 'overdue'
+                  ? `Đã quá hạn, còn thiếu ${fmtD(plan.remaining)}`
+                  : plan.state === 'behind'
+                    ? `Đang chậm ${fmtD(plan.gap)} so với kế hoạch. Mỗi tháng cần gửi ${fmtD(plan.perMonth)} để kịp hạn`
+                    : `Đúng tiến độ. Còn ${plan.daysLeft} ngày, mỗi tháng gửi thêm ${fmtD(plan.perMonth)}`}
             </p>
           )}
           <p className="detail-theme">{THEME_NAMES[jar.theme]}</p>

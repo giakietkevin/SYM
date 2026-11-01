@@ -1,5 +1,6 @@
 import type { KeyboardEvent, PointerEvent } from 'react';
 import { fmt, fmtD } from '../lib/money';
+import { goalPlan } from '../lib/goal';
 import { jarStatus } from '../lib/jar';
 import { HUES, CORAL, type Jar } from '../lib/types';
 import { JarArt } from './JarArt';
@@ -9,6 +10,14 @@ export interface Fx {
   kind: 'in' | 'out';
   amount: number;
   n: number;
+}
+
+function saveSub(jar: Jar, balance: number, pct: number): string {
+  const plan = goalPlan(jar, balance);
+  if (plan?.state === 'done') return 'Đã đạt mục tiêu';
+  if (plan?.state === 'overdue') return `Quá hạn, thiếu ${fmtD(plan.remaining)}`;
+  if (plan?.state === 'behind') return `${pct}% · chậm tiến độ`;
+  return `${pct}% của ${fmtD(jar.goal)}`;
 }
 
 export function JarCard({
@@ -39,7 +48,7 @@ export function JarCard({
         : st.over
         ? `Lạm ${fmtD(-balance)}`
         : `Đã dùng ${st.pct}% hạn mức`
-      : `${st.pct}% của ${fmtD(jar.goal)}`;
+      : saveSub(jar, balance, st.pct);
 
   const onKey = (e: KeyboardEvent) => {
     if (e.key === 'Enter' || e.key === ' ') {

@@ -1,3 +1,4 @@
+import { mergeDebts } from './debts';
 import type { Jar, Loc, Recurring, State, Tx } from './types';
 
 /** Lines marked `deleted` are tombstones: kept so a merge cannot bring them back, ignored everywhere else. */
@@ -33,6 +34,7 @@ export function mergeStates(local: State, remote: State): State {
     haptics: local.haptics,
     rule: local.rule ?? remote.rule,
     recurring: mergeRecurring(local.recurring, remote.recurring),
+    debts: mergeDebts(local.debts, remote.debts),
     rolled: [local.rolled, remote.rolled].filter(Boolean).sort().pop(), // YYYY-MM sorts as time
   };
 }
